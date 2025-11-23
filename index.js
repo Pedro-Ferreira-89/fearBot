@@ -1,4 +1,4 @@
-require("dotenv").config();
+
 const TelegramBot = require("node-telegram-bot-api");
 const sqlite3 = require("sqlite3").verbose();
 const axios = require("axios");
@@ -17,7 +17,6 @@ const baseProvider = new ethers.JsonRpcProvider(process.env.BASE_RPC_URL);
 const API = "https://api.coingecko.com/api/v3";
 const USDC_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'; // Example Sepolia
 const CBBTC_ADDRESS = "0x4200000000000000000000000000000000000006"
-
 const SWAP_ROUTER = "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4";
 
 // In-memory session state
@@ -123,17 +122,18 @@ bot.onText(/\/start/, async (msg) => {
             
 The bot that buys btc when in extreme fear and sells it on extreme greed.
              
-Your Deposit Address is: ${wallet.address} 
+Your Deposit Address is: \`${wallet.address}\`
             
-Deposit at least 0.0001 ETH in order to pay for transactions fees. And deposit USDC through Base Blockchain in order to buy on extreme fear and sell on extreme greed.`);
+Deposit USDC through Base Blockchain in order to buy on extreme fear and sell on extreme greed. Deposit also at least 0.0001 ETH through Base Blockchainin in order to pay for transactions fees.`, { parse_mode: "Markdown" });
 
         bot.sendMessage(
             chatId,
-            ` Commands:
-                - /status – Check portfolio
-                - /buyNow - Force Bot to buy BTC with USDC in walllet
-                - /closePosition – Close position by selling BTC for USDC
-                - /withdraw – Withdraw funds
+            `Commands:
+- /status – Check portfolio
+- /buyNow - Force Bot to buy BTC with USDC in walllet
+- /closePosition – Close position by selling BTC for USDC
+- /withdraw – Withdraw funds
+- /check - Check current Fear/Greed Index
                 `
         );
 
@@ -142,7 +142,7 @@ Deposit at least 0.0001 ETH in order to pay for transactions fees. And deposit U
         bot.sendMessage(
             chatId,
             `🚀 Welcome to Simoshi!
-            To generate your deposit wallet call the /start command in the private messages of the bot!
+To generate your deposit wallet call the /start command in the private messages of the bot!
 `
         );
     }
@@ -158,6 +158,7 @@ async function executeBuyTrade(id) {
     if (!user.length) return bot.sendMessage(id, "Not registered.");
     console.log(
         id, user[0]);
+
     if (user[0].wallet != null && user[0].wallet != null) {
         const userWallet = new ethers.Wallet(user[0].private_key, baseProvider);
 
@@ -172,6 +173,9 @@ async function executeBuyTrade(id) {
         const ERC20_ABI = [
             "function approve(address spender, uint256 amount) external returns (bool)"
         ];
+
+        bot.sendMessage(id,"Buying BTC...");
+
         const wethContract2 = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, userWallet);
         const t = await wethContract2.approve(SWAP_ROUTER, amountIn);
 
@@ -316,9 +320,9 @@ bot.onText(/\/status/, async (msg) => {
             `
 📊 *Your Portfolio*
 Wallet: \`${u.wallet || "Not set"}\`
-ETH Balance: ${ethers.formatEther(balance)}  $${ethHoldings}
-USDC Balance: ${ethers.formatUnits(usdcBalance, 6)} $${usdcHoldings}
-BTC Balance: ${ethers.formatEther(cbbtcBalance)} $${btcHoldings}
+ETH Balance: ${ethers.formatEther(balance)}  ($${ethHoldings})
+USDC Balance: ${ethers.formatUnits(usdcBalance, 6)} ($${usdcHoldings})
+BTC Balance: ${ethers.formatEther(cbbtcBalance)} ($${btcHoldings})
 Total Portfolio Balance: $${totalHoldingas.toFixed(2)}
     `,
             { parse_mode: "Markdown" }
@@ -327,38 +331,106 @@ Total Portfolio Balance: $${totalHoldingas.toFixed(2)}
 
 });
 
-// WITHDRAW
-bot.onText(/\/withdraw (.+)/, async (msg, match) => {
-    const chatId = msg.chat.id;
-    const destinationWallet = match[1].trim();
+bot.onText(/\/check/, async (msg) => {
+    bot.sendMessage(msg.chat.id, `Current Fear/Greed Index: ${await getFearGreed()}`);
+});
 
-    sessions[chatId] = { step: "awaitingAsset" };
+// WITHDRAW
+bot.onText(/\/withdraw/, async (msg, match) => {
+    console.log("match[1]");
+    const chatId = msg.chat.id;
+
+    console.log(match[1]);
+    sessions[chatId] = { step: "ASK_ASSET" };
 
     const user = await runQuery(
         `SELECT * FROM usersTokens WHERE telegram_id=?`,
         [chatId]
     );
-    if (!user.length) return bot.sendMessage(chatId, "Not registered.");
+    if (!user.length) return bot.sendMessage(chatId, "Not registered. Call /start to create a wallet and deposit funds.");
 
-    if(match[1].length < 5 ) return bot.sendMessage(chatId, "Not Address.");
-    console.log(match[1]);
-    if(user[0].wallet != null && user[0].private_key != null && match[1].length > 5 ) {
-        try{
-            const userWallet = new ethers.Wallet(user[0].private_key, baseProvider);
+    bot.sendMessage(chatId, `What asset do  do you want to withdraw? ETH, BTC or USDC? Input ALL to withdraw all.`);
 
-            const factoryContract = new ethers.Contract(USDC_ADDRESS, artifact.abi, userWallet);
-            // Check if pool already exists
-            let usdcBalance = await factoryContract.balanceOf(user[0].wallet);
-            await factoryContract.transfer(destinationWallet, usdcBalance);
-        }catch(e){
-            bot.sendMessage(chatId, e.toString());
-        }
-        bot.sendMessage(chatId, `💸 Withdrawal sent to: ${destinationWallet}`);
-    }else{
-        bot.sendMessage(chatId, `💸 Failed sent to: ${destinationWallet}`);
-    }
+
 });
 
+bot.on('message', async (msg) => {
+    const chatId = msg.chat.id;
+    const text = msg.text?.trim();
+
+    if (!sessions[chatId]) return; // User not in withdraw flow
+
+    const state = sessions[chatId];
+
+    // STEP 1 - Asset
+    if (state.step === 'ASK_ASSET') {
+        state.asset = text.toUpperCase();
+        if(state.asset !== "ETH" && state.asset !== "BTC" && state.asset !== "USDC" && state.asset !== "ALL"){
+            bot.sendMessage(chatId, "Invalid Asset. Valid assets are ETH, BTC and USDC.");
+        }else if(state.asset === "ALL"){
+            state.step = 'ASK_WALLET';
+            bot.sendMessage(chatId, "Please enter the destination wallet address:");
+        }else{
+            state.step = 'ASK_AMOUNT';
+            bot.sendMessage(chatId, "Please enter the amount you want to withdraw. Input ALL to withdraw all.");
+        }
+        return;
+    }
+
+    // STEP 2 - Amount
+    if (state.step === 'ASK_AMOUNT') {
+
+            bot.sendMessage(chatId, "Please enter the destination wallet address:");
+
+        state.amount = text;
+        state.step = 'ASK_WALLET';
+
+        return;
+    }
+
+    let wall;
+    // STEP 3 - Wallet
+    if (state.step === 'ASK_WALLET') {
+       // state.wallet = text;
+
+
+        wall = text;
+
+
+        function isValidEthereumAddress(address) {
+            return ethers.isAddress(address);
+        }
+        if(isValidEthereumAddress(wall)){
+            bot.sendMessage(
+                chatId,
+                `🧾 Confirm withdrawal:\n\n` +
+                `Asset: ${state.asset}\n` +
+                `Amount: ${state.amount}\n` +
+                `Destination: ${wall.toString()}\n\n` +
+                `Text OK to confirm transaction...`
+            );
+
+            // TODO: execute your blockchain transfer here
+
+            // Example:
+            // await withdrawFunds(state.asset, state.amount, state.wallet);
+
+            state.step = 'ASK_CONFIRM';
+        }else{
+            bot.sendMessage(chatId, "Invalid destination wallet. Please enter a valid destination wallet address:");
+        }
+
+
+
+    }
+
+    if (state.step === 'ASK_CONFIRM') {
+
+        bot.sendMessage(chatId, "✅ Withdrawal submitted successfully!");
+
+        delete sessions[chatId]; // Clear session
+    }
+});
 
 // ======================================================
 // AUTO TRADING LOOP
@@ -388,7 +460,7 @@ async function runAutoTrading() {
 
                 // SELL — Extreme Greed
                 if (fear > 75) {
-                    // await executeSell(u.telegram_id);
+                    // await executeSellTrade(u.telegram_id);
                     bot.sendMessage(
                         u.telegram_id,
                         `🤩 Extreme Greed (${fear}) → SELL executed!`
