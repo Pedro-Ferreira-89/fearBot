@@ -1,4 +1,4 @@
-
+require('dotenv').config({ path: '/tmp/.env' });
 const TelegramBot = require("node-telegram-bot-api");
 const sqlite3 = require("sqlite3").verbose();
 const axios = require("axios");
