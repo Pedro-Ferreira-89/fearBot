@@ -1,4 +1,4 @@
-require('dotenv').config();
+//require('dotenv').config();
 const TelegramBot = require("node-telegram-bot-api");
 const sqlite3 = require("sqlite3").verbose();
 const axios = require("axios");
@@ -579,18 +579,25 @@ async function runAutoTrading() {
 
         for (const u of users) {
             if (!decryptPrivateKey(JSON.parse(u.private_key), KEY)) continue;
-            const userWallet = new ethers.Wallet(u.private_key, baseProvider);
+            const userWallet = new ethers.Wallet(decryptPrivateKey(JSON.parse(u.private_key), KEY), baseProvider);
 
             const balance = await baseProvider.getBalance(u.wallet);
 
-            if(BigInt("100000000000000") <= BigInt(balance) ){
+
                 // BUY — Extreme Fear
                 if (fear < 15) {
+                    if(BigInt("100000000000000") <= BigInt(balance) ){
                     //  await executeBuyTrade(u.telegram_id);
                     bot.sendMessage(
                         u.telegram_id,
                         `😱 Extreme Fear (${fear}) → BUY executed!`
                     );
+                    }else{
+                        bot.sendMessage(
+                            u.telegram_id,
+                            `You don't have enough ether in your wallet to process transactions, please deposit at least 0.0001 ETH!`
+                        );
+                    }
                 }
 
                 // SELL — Extreme Greed
@@ -601,12 +608,7 @@ async function runAutoTrading() {
                         `🤩 Extreme Greed (${fear}) → SELL executed!`
                     );
                 }
-            }else{
-                bot.sendMessage(
-                    u.telegram_id,
-                    `You don't have enough ether in your wallet to process transactions, please deposit at least 0.0001 ETH!`
-                );
-            }
+
 
         }
     } catch (e) {
