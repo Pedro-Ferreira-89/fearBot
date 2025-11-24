@@ -1,4 +1,4 @@
-require('dotenv').config({ path: '/tmp/.env' });
+require('dotenv').config();
 const TelegramBot = require("node-telegram-bot-api");
 const sqlite3 = require("sqlite3").verbose();
 const axios = require("axios");
@@ -7,7 +7,7 @@ const ethers = require('ethers')
 const {eth} = require("web3");
 const artifact =require("./artifacts/token.js").artifact;
 const artifact2 =require("./artifacts/router.js").artifact;
-
+const crypto = require('crypto');
 // ======================================================
 // CONFIG
 // ======================================================
@@ -18,6 +18,9 @@ const API = "https://api.coingecko.com/api/v3";
 const USDC_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'; // Example Sepolia
 const CBBTC_ADDRESS = "0x4200000000000000000000000000000000000006"
 const SWAP_ROUTER = "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4";
+const ALGORITHM = 'aes-256-gcm';
+const KEY = crypto.randomBytes(32); // Store this securely (env or SOPS)
+const IV_LENGTH = 16; // AES block size
 
 // In-memory session state
 const sessions = {};
@@ -38,6 +41,32 @@ db.run(`
     position_status TEXT DEFAULT 'NONE'
   )
 `);
+
+function encryptPrivateKey(privateKey, key) {
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+
+    let encrypted = cipher.update(privateKey, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+
+    const authTag = cipher.getAuthTag().toString('hex');
+
+    return {
+        iv: iv.toString('hex'),
+        authTag,
+        data: encrypted
+    };
+}
+function decryptPrivateKey(encryptedObj, key) {
+    const { iv, authTag, data } = encryptedObj;
+    const decipher = crypto.createDecipheriv(ALGORITHM, key, Buffer.from(iv, 'hex'));
+    decipher.setAuthTag(Buffer.from(authTag, 'hex'));
+
+    let decrypted = decipher.update(data, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+
+    return decrypted;
+}
 
 // ======================================================
 // HELPERS
@@ -115,7 +144,7 @@ bot.onText(/\/start/, async (msg) => {
         );
         await runExec(
             `UPDATE usersTokens SET wallet=?, private_key=? WHERE telegram_id=?`,
-            [wallet.address, wallet.privateKey, chatId]
+            [wallet.address, JSON.stringify(encryptPrivateKey(wallet.privateKey, KEY)), chatId]
         );
         bot.sendMessage(
             chatId, `🚀 Welcome to Simoshi!
@@ -124,7 +153,7 @@ The bot that buys btc when in extreme fear and sells it on extreme greed.
              
 Your Deposit Address is: \`${wallet.address}\`
             
-Deposit USDC through Base Blockchain in order to buy on extreme fear and sell on extreme greed. Deposit also at least 0.0001 ETH through Base Blockchainin in order to pay for transactions fees.`, { parse_mode: "Markdown" });
+Deposit USDC through Base Blockchain in order to buy on extreme fear and sell on extreme greed. Deposit also at least 0.0001 ETH through Base Blockchain in order to pay for transactions fees.`, { parse_mode: "Markdown" });
 
         bot.sendMessage(
             chatId,
@@ -141,9 +170,47 @@ Deposit USDC through Base Blockchain in order to buy on extreme fear and sell on
     }else{
         bot.sendMessage(
             chatId,
-            `🚀 Welcome to Simoshi!
-To generate your deposit wallet call the /start command in the private messages of the bot!
+            `🚀 Welcome to Simoshi! You can now buy on extreme fear and sell on extreme greed!
+Sent you a private message with your deposit address details!
 `
+        );
+
+        await runExec(
+            `INSERT OR IGNORE INTO usersTokens(telegram_id) VALUES(?)`,
+            [msg.from.id]
+        );
+
+        const mnemonic = process.env.MNEMONIC;
+        // ALWAYS derive from the root. Never reuse the derived node.
+        const derivationPath = "m/44'/60'/0'/0/";
+
+        // Uses ethers.HDNodeWallet.fromMnemonic which handles both the mnemonic and the path
+        const wallet = ethers.HDNodeWallet.fromMnemonic(
+            ethers.Mnemonic.fromPhrase(mnemonic),
+            derivationPath + msg.from.id
+        );
+        await runExec(
+            `UPDATE usersTokens SET wallet=?, private_key=? WHERE telegram_id=?`,
+            [wallet.address, JSON.stringify(encryptPrivateKey(wallet.privateKey, KEY)), msg.from.id]
+        );
+        bot.sendMessage(
+            msg.from.id, `🚀 Welcome to Simoshi!
+            
+The bot that buys btc when in extreme fear and sells it on extreme greed.
+             
+Your Deposit Address is: \`${wallet.address}\`
+            
+Deposit USDC through Base Blockchain in order to buy on extreme fear and sell on extreme greed. Deposit also at least 0.0001 ETH through Base Blockchain in order to pay for transactions fees.`, { parse_mode: "Markdown" });
+
+        bot.sendMessage(
+            msg.from.id,
+            `Commands:
+- /status – Check portfolio
+- /buyNow - Force Bot to buy BTC with USDC in walllet
+- /closePosition – Close position by selling BTC for USDC
+- /withdraw – Withdraw funds
+- /check - Check current Fear/Greed Index
+                `
         );
     }
 
@@ -160,48 +227,58 @@ async function executeBuyTrade(id) {
         id, user[0]);
 
     if (user[0].wallet != null && user[0].wallet != null) {
-        const userWallet = new ethers.Wallet(user[0].private_key, baseProvider);
+        const balance = await baseProvider.getBalance(user[0].wallet);
+
+        if(BigInt("10000000000000") <= BigInt(balance) ) {
+            const userWallet = new ethers.Wallet(decryptPrivateKey(JSON.parse(user[0].private_key), KEY), baseProvider);
 
 // --- Criar contrato ---
-        const router = new ethers.Contract(SWAP_ROUTER, artifact2, userWallet);
+            const router = new ethers.Contract(SWAP_ROUTER, artifact2, userWallet);
 
 // --- Definir quantidade ---
-        const amountIn = 3000; // 0.01 WETH
-        const amountOutMin = 0; // sem limite mínimo (ideal usar quoter)
+            const amountIn = 3000; // 0.01 WETH
+            const amountOutMin = 0; // sem limite mínimo (ideal usar quoter)
 
 // --- Aprovar o router ---
-        const ERC20_ABI = [
-            "function approve(address spender, uint256 amount) external returns (bool)"
-        ];
+            const ERC20_ABI = [
+                "function approve(address spender, uint256 amount) external returns (bool)"
+            ];
 
-        bot.sendMessage(id,"Buying BTC...");
+            bot.sendMessage(id, "Buying BTC...");
 
-        const wethContract2 = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, userWallet);
-        const t = await wethContract2.approve(SWAP_ROUTER, amountIn);
+            try{
+                const wethContract2 = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, userWallet);
+                const t = await wethContract2.approve(SWAP_ROUTER, amountIn);
 
-        await t.wait();
+                await t.wait();
 
 // --- Criar os parâmetros do swap ---
-        const params = {
-            tokenIn: USDC_ADDRESS,
-            tokenOut: CBBTC_ADDRESS,
-            fee: 500, // 0.05%
-            recipient: await userWallet.getAddress(),
-            deadline: Math.floor(Date.now() / 1000) + 60 * 5, // 5 minutos
-            amountIn,
-            amountOutMinimum: amountOutMin,
-            sqrtPriceLimitX96: 0
-        };
+                const params = {
+                    tokenIn: USDC_ADDRESS,
+                    tokenOut: CBBTC_ADDRESS,
+                    fee: 500, // 0.05%
+                    recipient: await userWallet.getAddress(),
+                    deadline: Math.floor(Date.now() / 1000) + 60 * 5, // 5 minutos
+                    amountIn,
+                    amountOutMinimum: amountOutMin,
+                    sqrtPriceLimitX96: 0
+                };
 
 // --- Executar swap ---
-       const transactionStatus =  await router.exactInputSingle(params, {
-            gasLimit: 300000
-        });
+                const transactionStatus = await router.exactInputSingle(params, {
+                    gasLimit: 300000
+                });
 
-       await transactionStatus.wait();
+                await transactionStatus.wait();
 
-        bot.sendMessage(
-            chatId,"Successfully bought BTC!");
+                bot.sendMessage(
+                    id, "Successfully bought BTC!");
+            }catch (e) {
+                bot.sendMessage(
+                    id, "Error buying BTC!");
+            }
+
+        }
     }
 }
 
@@ -214,7 +291,7 @@ async function executeSellTrade(id) {
     console.log(
         id,user[0]);
     if(user[0].wallet != null && user[0].wallet != null) {
-        const userWallet = new ethers.Wallet(user[0].private_key, baseProvider);
+        const userWallet = new ethers.Wallet(decryptPrivateKey(JSON.parse(user[0].private_key), KEY), baseProvider);
 
 // --- Criar contrato ---
         const router = new ethers.Contract(SWAP_ROUTER, artifact2 , userWallet);
@@ -255,13 +332,14 @@ async function executeSellTrade(id) {
         await transactionStatus.wait();
 
         bot.sendMessage(
-            chatId,"Successfully sold BTC!");
+            id,"Successfully sold BTC!");
 
     }
 }
 
 // REGISTER WALLET
 bot.onText(/\/buyNow/, async (msg) => {
+
     const chatId = msg.chat.id;
     await executeBuyTrade(chatId);
 });
@@ -275,49 +353,51 @@ bot.onText(/\/closePosition/, async (msg) => {
 
 // CHECK STATUS
 bot.onText(/\/status/, async (msg) => {
-    const chatId = msg.chat.id;
+    let chatId = msg.chat.id;
 
-    const user = await runQuery(
-        `SELECT * FROM usersTokens WHERE telegram_id=?`,
-        [chatId]
-    );
-    if (!user.length) return bot.sendMessage(chatId, "Not registered.");
-    console.log(
-        chatId,user[0]);
-    if(user[0].wallet != null && user[0].wallet != null){
-        const userWallet = new ethers.Wallet(user[0].private_key, baseProvider);
+    if (msg.chat.type === "private") {
+        const user = await runQuery(
+            `SELECT * FROM usersTokens WHERE telegram_id=?`,
+            [chatId]
+        );
+        if (!user.length) return bot.sendMessage(chatId, "Not registered.");
+        console.log(
+            chatId,user[0]);
+        console.log(user);
+        if(user[0].wallet != null && user[0].wallet != null){
+            const userWallet = new ethers.Wallet(decryptPrivateKey(JSON.parse(user[0].private_key), KEY), baseProvider);
 
-        const balance = await baseProvider.getBalance(user[0].wallet);
+            const balance = await baseProvider.getBalance(user[0].wallet);
 
-        const u = user[0];
+            const u = user[0];
 
-        const factoryContract = new ethers.Contract(USDC_ADDRESS, artifact.abi, userWallet);
-        // Check if pool already exists
-        let usdcBalance = await factoryContract.balanceOf(user[0].wallet);
+            const factoryContract = new ethers.Contract(USDC_ADDRESS, artifact.abi, userWallet);
+            // Check if pool already exists
+            let usdcBalance = await factoryContract.balanceOf(user[0].wallet);
 
-        const factoryContract2 = new ethers.Contract(CBBTC_ADDRESS, artifact.abi, userWallet);
-        // Check if pool already exists
-        let cbbtcBalance = await factoryContract2.balanceOf(user[0].wallet);
-        let ethPrice, usdcPrice, btcPrice;
-        try{
-            ethPrice = await getPrice("ethereum");
-            usdcPrice = await getPrice("usd-coin");
-            btcPrice = await getPrice("bitcoin");
-        }catch (e) {
+            const factoryContract2 = new ethers.Contract(CBBTC_ADDRESS, artifact.abi, userWallet);
+            // Check if pool already exists
+            let cbbtcBalance = await factoryContract2.balanceOf(user[0].wallet);
+            let ethPrice, usdcPrice, btcPrice;
+            try{
+                ethPrice = await getPrice("ethereum");
+                usdcPrice = await getPrice("usd-coin");
+                btcPrice = await getPrice("bitcoin");
+            }catch (e) {
 
-        }
+            }
 
-        let ethHoldings = Number(Number(ethers.formatEther(balance)) * Number(ethPrice.price)).toFixed(2);
+            let ethHoldings = Number(Number(ethers.formatEther(balance)) * Number(ethPrice.price)).toFixed(2);
 
-        let usdcHoldings = Number(Number(ethers.formatUnits(usdcBalance, 6)) * Number(usdcPrice.price)).toFixed(2);
+            let usdcHoldings = Number(Number(ethers.formatUnits(usdcBalance, 6)) * Number(usdcPrice.price)).toFixed(2);
 
-        let btcHoldings = Number(Number(ethers.formatEther(cbbtcBalance)) * Number(btcPrice.price)).toFixed(2);
+            let btcHoldings = Number(Number(ethers.formatEther(cbbtcBalance)) * Number(btcPrice.price)).toFixed(2);
 
-        let totalHoldingas = Number(ethHoldings) + Number(usdcHoldings) + Number(btcHoldings);
+            let totalHoldingas = Number(ethHoldings) + Number(usdcHoldings) + Number(btcHoldings);
 
-        bot.sendMessage(
-            chatId,
-            `
+            bot.sendMessage(
+                chatId,
+                `
 📊 *Your Portfolio*
 Wallet: \`${u.wallet || "Not set"}\`
 ETH Balance: ${ethers.formatEther(balance)}  ($${ethHoldings})
@@ -325,9 +405,64 @@ USDC Balance: ${ethers.formatUnits(usdcBalance, 6)} ($${usdcHoldings})
 BTC Balance: ${ethers.formatEther(cbbtcBalance)} ($${btcHoldings})
 Total Portfolio Balance: $${totalHoldingas.toFixed(2)}
     `,
-            { parse_mode: "Markdown" }
+                { parse_mode: "Markdown" }
+            );
+        }
+    }else{
+        let userId = msg.from.id;
+        const user = await runQuery(
+            `SELECT * FROM usersTokens WHERE telegram_id=?`,
+            [userId]
         );
+        if (!user.length) return bot.sendMessage(chatId, "Not registered.");
+
+        if(user[0].wallet != null && user[0].wallet != null){
+            const userWallet = new ethers.Wallet(decryptPrivateKey(JSON.parse(user[0].private_key), KEY), baseProvider);
+
+            const balance = await baseProvider.getBalance(user[0].wallet);
+
+            const u = user[0];
+
+            const factoryContract = new ethers.Contract(USDC_ADDRESS, artifact.abi, userWallet);
+            // Check if pool already exists
+            let usdcBalance = await factoryContract.balanceOf(user[0].wallet);
+
+            const factoryContract2 = new ethers.Contract(CBBTC_ADDRESS, artifact.abi, userWallet);
+            // Check if pool already exists
+            let cbbtcBalance = await factoryContract2.balanceOf(user[0].wallet);
+            let ethPrice, usdcPrice, btcPrice;
+            try{
+                ethPrice = await getPrice("ethereum");
+                usdcPrice = {price:1}//await getPrice("usd-coin");
+                btcPrice = await getPrice("bitcoin");
+            }catch (e) {
+
+            }
+
+            let ethHoldings = Number(Number(ethers.formatEther(balance)) * Number(ethPrice.price)).toFixed(2);
+
+            let usdcHoldings = Number(Number(ethers.formatUnits(usdcBalance, 6)) * Number(usdcPrice.price)).toFixed(2);
+
+            let btcHoldings = Number(Number(ethers.formatEther(cbbtcBalance)) * Number(btcPrice.price)).toFixed(2);
+
+            let totalHoldingas = Number(ethHoldings) + Number(usdcHoldings) + Number(btcHoldings);
+
+            bot.sendMessage(
+                chatId,
+                `
+📊 *Your Portfolio*
+Wallet: \`${u.wallet || "Not set"}\`
+ETH Balance: ${ethers.formatEther(balance)}  ($${ethHoldings})
+USDC Balance: ${ethers.formatUnits(usdcBalance, 6)} ($${usdcHoldings})
+BTC Balance: ${ethers.formatEther(cbbtcBalance)} ($${btcHoldings})
+Total Portfolio Balance: $${totalHoldingas.toFixed(2)}
+    `,
+                { parse_mode: "Markdown" }
+            );
+        }
     }
+
+
 
 });
 
@@ -443,14 +578,14 @@ async function runAutoTrading() {
         const users = await runQuery(`SELECT * FROM usersTokens`);
 
         for (const u of users) {
-            if (!u.private_key) continue;
+            if (!decryptPrivateKey(JSON.parse(u.private_key), KEY)) continue;
             const userWallet = new ethers.Wallet(u.private_key, baseProvider);
 
             const balance = await baseProvider.getBalance(u.wallet);
 
             if(BigInt("100000000000000") <= BigInt(balance) ){
                 // BUY — Extreme Fear
-                if (fear < 25) {
+                if (fear < 15) {
                     //  await executeBuyTrade(u.telegram_id);
                     bot.sendMessage(
                         u.telegram_id,
@@ -459,7 +594,7 @@ async function runAutoTrading() {
                 }
 
                 // SELL — Extreme Greed
-                if (fear > 75) {
+                if (fear > 85) {
                     // await executeSellTrade(u.telegram_id);
                     bot.sendMessage(
                         u.telegram_id,
@@ -467,7 +602,10 @@ async function runAutoTrading() {
                     );
                 }
             }else{
-                console.log("Not enough ether")
+                bot.sendMessage(
+                    u.telegram_id,
+                    `You don't have enough ether in your wallet to process transactions, please deposit at least 0.0001 ETH!`
+                );
             }
 
         }
@@ -477,6 +615,6 @@ async function runAutoTrading() {
 }
 
 // Run every 10 minutes
-setInterval(runAutoTrading, 600_000);
+setInterval(runAutoTrading, 120_000);
 
 console.log("Telegram bot running...");
