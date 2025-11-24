@@ -12,6 +12,7 @@ const crypto = require('crypto');
 // CONFIG
 // ======================================================
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+console.log(TOKEN)
 const bot = new TelegramBot(TOKEN, { polling: true });
 const baseProvider = new ethers.JsonRpcProvider(process.env.BASE_RPC_URL);
 const API = "https://api.coingecko.com/api/v3";
