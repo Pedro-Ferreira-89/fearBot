@@ -26,6 +26,278 @@ const IV_LENGTH = 16; // AES block size
 // In-memory session state
 const sessions = {};
 
+// Add to your CONFIG section (assuming Base Sepolia addresses)
+const QUOTER_V2_ADDRESS = "0xC5290058841028F1614F3A6F0F5816cAd0df5E27"; // Example Base Sepolia Quoter V2
+// Note: Always verify this address for your specific network!
+
+// Define Quoter V2 ABI (only need the function we will call)
+const QUOTER_V2_ABI = [
+    {
+        "inputs": [
+            {
+                "internalType": "address",
+                "name": "_factory",
+                "type": "address"
+            },
+            {
+                "internalType": "address",
+                "name": "_WETH9",
+                "type": "address"
+            }
+        ],
+        "stateMutability": "nonpayable",
+        "type": "constructor"
+    },
+    {
+        "inputs": [],
+        "name": "WETH9",
+        "outputs": [
+            {
+                "internalType": "address",
+                "name": "",
+                "type": "address"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "factory",
+        "outputs": [
+            {
+                "internalType": "address",
+                "name": "",
+                "type": "address"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internalType": "bytes",
+                "name": "path",
+                "type": "bytes"
+            },
+            {
+                "internalType": "uint256",
+                "name": "amountIn",
+                "type": "uint256"
+            }
+        ],
+        "name": "quoteExactInput",
+        "outputs": [
+            {
+                "internalType": "uint256",
+                "name": "amountOut",
+                "type": "uint256"
+            },
+            {
+                "internalType": "uint160[]",
+                "name": "sqrtPriceX96AfterList",
+                "type": "uint160[]"
+            },
+            {
+                "internalType": "uint32[]",
+                "name": "initializedTicksCrossedList",
+                "type": "uint32[]"
+            },
+            {
+                "internalType": "uint256",
+                "name": "gasEstimate",
+                "type": "uint256"
+            }
+        ],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "components": [
+                    {
+                        "internalType": "address",
+                        "name": "tokenIn",
+                        "type": "address"
+                    },
+                    {
+                        "internalType": "address",
+                        "name": "tokenOut",
+                        "type": "address"
+                    },
+                    {
+                        "internalType": "uint256",
+                        "name": "amountIn",
+                        "type": "uint256"
+                    },
+                    {
+                        "internalType": "uint24",
+                        "name": "fee",
+                        "type": "uint24"
+                    },
+                    {
+                        "internalType": "uint160",
+                        "name": "sqrtPriceLimitX96",
+                        "type": "uint160"
+                    }
+                ],
+                "internalType": "struct IQuoterV2.QuoteExactInputSingleParams",
+                "name": "params",
+                "type": "tuple"
+            }
+        ],
+        "name": "quoteExactInputSingle",
+        "outputs": [
+            {
+                "internalType": "uint256",
+                "name": "amountOut",
+                "type": "uint256"
+            },
+            {
+                "internalType": "uint160",
+                "name": "sqrtPriceX96After",
+                "type": "uint160"
+            },
+            {
+                "internalType": "uint32",
+                "name": "initializedTicksCrossed",
+                "type": "uint32"
+            },
+            {
+                "internalType": "uint256",
+                "name": "gasEstimate",
+                "type": "uint256"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internalType": "bytes",
+                "name": "path",
+                "type": "bytes"
+            },
+            {
+                "internalType": "uint256",
+                "name": "amountOut",
+                "type": "uint256"
+            }
+        ],
+        "name": "quoteExactOutput",
+        "outputs": [
+            {
+                "internalType": "uint256",
+                "name": "amountIn",
+                "type": "uint256"
+            },
+            {
+                "internalType": "uint160[]",
+                "name": "sqrtPriceX96AfterList",
+                "type": "uint160[]"
+            },
+            {
+                "internalType": "uint32[]",
+                "name": "initializedTicksCrossedList",
+                "type": "uint32[]"
+            },
+            {
+                "internalType": "uint256",
+                "name": "gasEstimate",
+                "type": "uint256"
+            }
+        ],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "components": [
+                    {
+                        "internalType": "address",
+                        "name": "tokenIn",
+                        "type": "address"
+                    },
+                    {
+                        "internalType": "address",
+                        "name": "tokenOut",
+                        "type": "address"
+                    },
+                    {
+                        "internalType": "uint256",
+                        "name": "amount",
+                        "type": "uint256"
+                    },
+                    {
+                        "internalType": "uint24",
+                        "name": "fee",
+                        "type": "uint24"
+                    },
+                    {
+                        "internalType": "uint160",
+                        "name": "sqrtPriceLimitX96",
+                        "type": "uint160"
+                    }
+                ],
+                "internalType": "struct IQuoterV2.QuoteExactOutputSingleParams",
+                "name": "params",
+                "type": "tuple"
+            }
+        ],
+        "name": "quoteExactOutputSingle",
+        "outputs": [
+            {
+                "internalType": "uint256",
+                "name": "amountIn",
+                "type": "uint256"
+            },
+            {
+                "internalType": "uint160",
+                "name": "sqrtPriceX96After",
+                "type": "uint160"
+            },
+            {
+                "internalType": "uint32",
+                "name": "initializedTicksCrossed",
+                "type": "uint32"
+            },
+            {
+                "internalType": "uint256",
+                "name": "gasEstimate",
+                "type": "uint256"
+            }
+        ],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internalType": "int256",
+                "name": "amount0Delta",
+                "type": "int256"
+            },
+            {
+                "internalType": "int256",
+                "name": "amount1Delta",
+                "type": "int256"
+            },
+            {
+                "internalType": "bytes",
+                "name": "path",
+                "type": "bytes"
+            }
+        ],
+        "name": "uniswapV3SwapCallback",
+        "outputs": [],
+        "stateMutability": "view",
+        "type": "function"
+    }
+];
 //const web3 = new Web3("https://mainnet.infura.io/v3/YOUR_INFURA_KEY");
 
 // ======================================================
@@ -240,15 +512,53 @@ async function executeBuyTrade(id) {
             // Check if pool already exists
             let usdcBalance = await factoryContract.balanceOf(user[0].wallet);
 
-            let usdcBalanceBuy = usdcBalance * 0.997;
+            let usdcBalanceBuy = usdcBalance * BigInt(997) / BigInt(1000);
             let feeAmount = usdcBalance - usdcBalanceBuy;
 // --- Definir quantidade ---
-            const amountIn = usdcBalanceBuy; // 0.01 WETH
-            const amountOutMin = 0; // sem limite mínimo (ideal usar quoter)
+
+            const amountIn = usdcBalanceBuy* BigInt(997) / BigInt(1000); // Example: 3000 USDC (6 decimals)
+            const slippageTolerance = 0.5; // Set slippage to 0.5%
+
+            // --- 1. GET QUOTE ---
+            const quoter = new ethers.Contract(QUOTER_V2_ADDRESS, QUOTER_V2_ABI, baseProvider);
+
+            const quoteParams = {
+                tokenIn: USDC_ADDRESS,
+                tokenOut: CBBTC_ADDRESS,
+                fee: 3000, // 0.3%
+                amountIn: amountIn,
+                // Set price limit to zero for the quote, as we are checking the optimal path
+                sqrtPriceLimitX96: 0
+            };
+
+            let quotedAmountOut;
+            try {
+                // Returns tuple: [amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate]
+                const result = await quoter.quoteExactInputSingle(quoteParams);
+                quotedAmountOut = result[0]; // The first element is the expected amountOut
+
+                bot.sendMessage(id, `Quoted BTC output (before slippage): ${ethers.formatEther(quotedAmountOut)}`);
+            } catch (e) {
+                console.error("Quoter Error:", e);
+                return bot.sendMessage(id, "Error fetching price quote. Trade aborted.");
+            }
+
+            // --- 2. CALCULATE MINIMUM OUTPUT (SLIPPAGE) ---
+            // amountOutMinimum = quotedAmountOut * (1 - slippageTolerance / 100)
+            const minAmount = quotedAmountOut * BigInt(10000) / BigInt(10000 + slippageTolerance * 100);
+            const amountOutMinimum = minAmount / BigInt(100);
+
+            // Adjust to BigInt arithmetic:
+            // Example: 0.5% slippage means min amount is 99.5% of quote.
+            const numerator = BigInt(1000) - BigInt(slippageTolerance * 10); // 1000 - 5 = 995
+            const denominator = BigInt(1000);
+
+            const amountOutMin = (quotedAmountOut * numerator) / denominator;// sem limite mínimo (ideal usar quoter)
 
 // --- Aprovar o router ---
             const ERC20_ABI = [
-                "function approve(address spender, uint256 amount) external returns (bool)"
+                "function approve(address spender, uint256 amount) external returns (bool)",
+                "function transfer(address to, uint256 amount) external returns (bool)"
             ];
 
             bot.sendMessage(id, "Buying BTC...");
@@ -256,6 +566,8 @@ async function executeBuyTrade(id) {
             try{
                 const wethContract2 = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, userWallet);
                 const t2 = await wethContract2.transfer(TREASURY, feeAmount);
+
+                await t2.wait();
                 const t = await wethContract2.approve(SWAP_ROUTER, amountIn);
 
                 await t.wait();
@@ -264,7 +576,7 @@ async function executeBuyTrade(id) {
                 const params = {
                     tokenIn: USDC_ADDRESS,
                     tokenOut: CBBTC_ADDRESS,
-                    fee: 500, // 0.05%
+                    fee: 3000, // 0.05%
                     recipient: await userWallet.getAddress(),
                     deadline: Math.floor(Date.now() / 1000) + 60 * 5, // 5 minutos
                     amountIn,
@@ -283,7 +595,7 @@ async function executeBuyTrade(id) {
                     id, "Successfully bought BTC!");
             }catch (e) {
                 bot.sendMessage(
-                    id, "Error buying BTC!");
+                    id, "Error buying BTC!"+e.toString());
             }
 
         }
@@ -308,9 +620,45 @@ async function executeSellTrade(id) {
         // Check if pool already exists
         let cbbtcBalance = await factoryContract2.balanceOf(user[0].wallet);
 
-// --- Definir quantidade ---
-        const amountIn = cbbtcBalance; // 0.01 WETH
-        const amountOutMin = 0; // sem limite mínimo (ideal usar quoter)
+        const amountIn = ethers.parseUnits(cbbtcBalance, 6) * BigInt(997) / BigInt(1000); // Example: 3000 USDC (6 decimals)
+        const slippageTolerance = 0.5; // Set slippage to 0.5%
+
+        // --- 1. GET QUOTE ---
+        const quoter = new ethers.Contract(QUOTER_V2_ADDRESS, QUOTER_V2_ABI, baseProvider);
+
+        const quoteParams = {
+            tokenIn: USDC_ADDRESS,
+            tokenOut: CBBTC_ADDRESS,
+            fee: 3000, // 0.3%
+            amountIn: amountIn,
+            // Set price limit to zero for the quote, as we are checking the optimal path
+            sqrtPriceLimitX96: 0
+        };
+
+        let quotedAmountOut;
+        try {
+            // Returns tuple: [amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate]
+            const result = await quoter.quoteExactInputSingle(quoteParams);
+            quotedAmountOut = result[0]; // The first element is the expected amountOut
+
+            bot.sendMessage(id, `Quoted BTC output (before slippage): ${ethers.formatEther(quotedAmountOut)}`);
+        } catch (e) {
+            console.error("Quoter Error:", e);
+            return bot.sendMessage(id, "Error fetching price quote. Trade aborted.");
+        }
+
+        // --- 2. CALCULATE MINIMUM OUTPUT (SLIPPAGE) ---
+        // amountOutMinimum = quotedAmountOut * (1 - slippageTolerance / 100)
+        const minAmount = quotedAmountOut * BigInt(10000) / BigInt(10000 + slippageTolerance * 100);
+        const amountOutMinimum = minAmount / BigInt(100);
+
+        // Adjust to BigInt arithmetic:
+        // Example: 0.5% slippage means min amount is 99.5% of quote.
+        const numerator = BigInt(1000) - BigInt(slippageTolerance * 10); // 1000 - 5 = 995
+        const denominator = BigInt(1000);
+
+        const amountOutMin = (quotedAmountOut * numerator) / denominator;// sem limite mínimo (ideal usar quoter)
+
 
 // --- Aprovar o router ---
         const ERC20_ABI = [
@@ -325,7 +673,7 @@ async function executeSellTrade(id) {
         const params = {
             tokenIn: CBBTC_ADDRESS,
             tokenOut: USDC_ADDRESS,
-            fee: 500, // 0.05%
+            fee: 3000, // 0.05%
             recipient: await userWallet.getAddress(),
             deadline: Math.floor(Date.now() / 1000) + 60 * 5, // 5 minutos
             amountIn,
@@ -624,7 +972,7 @@ async function runAutoTrading() {
     }
 }
 
-// Run every 10 minutes
-setInterval(runAutoTrading, 120_000);
+// Run every 12 hours
+setInterval(runAutoTrading, 32200_000);
 
 console.log("Telegram bot running...");
