@@ -1,4 +1,4 @@
-//require('dotenv').config();
+require('dotenv').config();
 const TelegramBot = require("node-telegram-bot-api");
 const sqlite3 = require("sqlite3").verbose();
 const axios = require("axios");
@@ -12,13 +12,13 @@ const crypto = require('crypto');
 // CONFIG
 // ======================================================
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-console.log(TOKEN)
 const bot = new TelegramBot(TOKEN, { polling: true });
 const baseProvider = new ethers.JsonRpcProvider(process.env.BASE_RPC_URL);
 const API = "https://api.coingecko.com/api/v3";
 const USDC_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'; // Example Sepolia
 const CBBTC_ADDRESS = "0x4200000000000000000000000000000000000006"
 const SWAP_ROUTER = "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4";
+const TREASURY = "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4";
 const ALGORITHM = 'aes-256-gcm';
 const KEY = crypto.randomBytes(32); // Store this securely (env or SOPS)
 const IV_LENGTH = 16; // AES block size
@@ -236,8 +236,14 @@ async function executeBuyTrade(id) {
 // --- Criar contrato ---
             const router = new ethers.Contract(SWAP_ROUTER, artifact2, userWallet);
 
+            const factoryContract = new ethers.Contract(USDC_ADDRESS, artifact.abi, userWallet);
+            // Check if pool already exists
+            let usdcBalance = await factoryContract.balanceOf(user[0].wallet);
+
+            let usdcBalanceBuy = usdcBalance * 0.997;
+            let feeAmount = usdcBalance - usdcBalanceBuy;
 // --- Definir quantidade ---
-            const amountIn = 3000; // 0.01 WETH
+            const amountIn = usdcBalanceBuy; // 0.01 WETH
             const amountOutMin = 0; // sem limite mínimo (ideal usar quoter)
 
 // --- Aprovar o router ---
@@ -249,6 +255,7 @@ async function executeBuyTrade(id) {
 
             try{
                 const wethContract2 = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, userWallet);
+                const t2 = await wethContract2.transfer(TREASURY, feeAmount);
                 const t = await wethContract2.approve(SWAP_ROUTER, amountIn);
 
                 await t.wait();
