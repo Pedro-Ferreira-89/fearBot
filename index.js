@@ -1,303 +1,69 @@
 require('dotenv').config();
-const TelegramBot = require("node-telegram-bot-api");
-const sqlite3 = require("sqlite3").verbose();
-const axios = require("axios");
-const Web3 = require("web3");
-const ethers = require('ethers')
-const {eth} = require("web3");
+const TelegramBot= require("node-telegram-bot-api");
+const sqlite3= require("sqlite3").verbose();
+const axios       = require("axios");
+const Web3  = require("web3");
+const ethers      = require('ethers')
+const {eth}       = require("web3");
 const artifact =require("./artifacts/token.js").artifact;
-const artifact2 =require("./artifacts/router.js").artifact;
-const crypto = require('crypto');
+const artifact2      =require("./artifacts/router.js").artifact;
+const artifactQuoter      =require("./artifacts/quoter.js").artifact;
+const crypto      = require('crypto');
 // ======================================================
 // CONFIG
 // ======================================================
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const bot = new TelegramBot(TOKEN, { polling: true });
 const baseProvider = new ethers.JsonRpcProvider(process.env.BASE_RPC_URL);
-const API = "https://api.coingecko.com/api/v3";
-const USDC_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'; // Example Sepolia
+const API           = "https://api.coingecko.com/api/v3";
+const USDC_ADDRESS  = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'; // Example Sepolia
 const CBBTC_ADDRESS = "0x4200000000000000000000000000000000000006"
-const SWAP_ROUTER = "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4";
-const TREASURY = "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4";
-const ALGORITHM = 'aes-256-gcm';
-const KEY = crypto.randomBytes(32); // Store this securely (env or SOPS)
-const IV_LENGTH = 16; // AES block size
+const SWAP_ROUTER   = "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4";
+const TREASURY      = "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4";
+const ALGORITHM            = process.env.ALGORITHM;
+const KEY  = Buffer.from(process.env.KEY_ALG, 'hex')//crypto.randomBytes(32); // Store this securely (env or SOPS)
+const IV_LENGTH            = Number(process.env.IVLENGTH); // AES block size
+const QUOTER_V2_ADDRESS = "0xC5290058841028F1614F3A6F0F5816cAd0df5E27"; // Example Base Sepolia Quoter V2
+const AAVE_POOL_ADDRESS = "0xD1113dD8c1718D051EaC536FC1E30c2d0728c505"; // Example Aave V3 Pool on Base Sepolia
+const QUOTER_V2_ABI = artifactQuoter;
 
 // In-memory session state
 const sessions = {};
 
-// Add to your CONFIG section (assuming Base Sepolia addresses)
-const QUOTER_V2_ADDRESS = "0xC5290058841028F1614F3A6F0F5816cAd0df5E27"; // Example Base Sepolia Quoter V2
-// Note: Always verify this address for your specific network!
+// NOTE: Verify the correct Aave V3 Pool address for your network!
+// Minimal ABI for the Aave Lending Pool
+const AAVE_POOL_ABI = [
+    {
+        "inputs": [
+            {
+                "internalType": "address",
+                "name": "asset",
+                "type": "address"
+            },
+            {
+                "internalType": "uint256",
+                "name": "amount",
+                "type": "uint256"
+            },
+            {
+                "internalType": "address",
+                "name": "onBehalfOf",
+                "type": "address"
+            },
+            {
+                "internalType": "uint16",
+                "name": "referralCode",
+                "type": "uint16"
+            }
+        ],
+        "name": "supply",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    }];
 
 // Define Quoter V2 ABI (only need the function we will call)
-const QUOTER_V2_ABI = [
-    {
-        "inputs": [
-            {
-                "internalType": "address",
-                "name": "_factory",
-                "type": "address"
-            },
-            {
-                "internalType": "address",
-                "name": "_WETH9",
-                "type": "address"
-            }
-        ],
-        "stateMutability": "nonpayable",
-        "type": "constructor"
-    },
-    {
-        "inputs": [],
-        "name": "WETH9",
-        "outputs": [
-            {
-                "internalType": "address",
-                "name": "",
-                "type": "address"
-            }
-        ],
-        "stateMutability": "view",
-        "type": "function"
-    },
-    {
-        "inputs": [],
-        "name": "factory",
-        "outputs": [
-            {
-                "internalType": "address",
-                "name": "",
-                "type": "address"
-            }
-        ],
-        "stateMutability": "view",
-        "type": "function"
-    },
-    {
-        "inputs": [
-            {
-                "internalType": "bytes",
-                "name": "path",
-                "type": "bytes"
-            },
-            {
-                "internalType": "uint256",
-                "name": "amountIn",
-                "type": "uint256"
-            }
-        ],
-        "name": "quoteExactInput",
-        "outputs": [
-            {
-                "internalType": "uint256",
-                "name": "amountOut",
-                "type": "uint256"
-            },
-            {
-                "internalType": "uint160[]",
-                "name": "sqrtPriceX96AfterList",
-                "type": "uint160[]"
-            },
-            {
-                "internalType": "uint32[]",
-                "name": "initializedTicksCrossedList",
-                "type": "uint32[]"
-            },
-            {
-                "internalType": "uint256",
-                "name": "gasEstimate",
-                "type": "uint256"
-            }
-        ],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    },
-    {
-        "inputs": [
-            {
-                "components": [
-                    {
-                        "internalType": "address",
-                        "name": "tokenIn",
-                        "type": "address"
-                    },
-                    {
-                        "internalType": "address",
-                        "name": "tokenOut",
-                        "type": "address"
-                    },
-                    {
-                        "internalType": "uint256",
-                        "name": "amountIn",
-                        "type": "uint256"
-                    },
-                    {
-                        "internalType": "uint24",
-                        "name": "fee",
-                        "type": "uint24"
-                    },
-                    {
-                        "internalType": "uint160",
-                        "name": "sqrtPriceLimitX96",
-                        "type": "uint160"
-                    }
-                ],
-                "internalType": "struct IQuoterV2.QuoteExactInputSingleParams",
-                "name": "params",
-                "type": "tuple"
-            }
-        ],
-        "name": "quoteExactInputSingle",
-        "outputs": [
-            {
-                "internalType": "uint256",
-                "name": "amountOut",
-                "type": "uint256"
-            },
-            {
-                "internalType": "uint160",
-                "name": "sqrtPriceX96After",
-                "type": "uint160"
-            },
-            {
-                "internalType": "uint32",
-                "name": "initializedTicksCrossed",
-                "type": "uint32"
-            },
-            {
-                "internalType": "uint256",
-                "name": "gasEstimate",
-                "type": "uint256"
-            }
-        ],
-        "stateMutability": "view",
-        "type": "function"
-    },
-    {
-        "inputs": [
-            {
-                "internalType": "bytes",
-                "name": "path",
-                "type": "bytes"
-            },
-            {
-                "internalType": "uint256",
-                "name": "amountOut",
-                "type": "uint256"
-            }
-        ],
-        "name": "quoteExactOutput",
-        "outputs": [
-            {
-                "internalType": "uint256",
-                "name": "amountIn",
-                "type": "uint256"
-            },
-            {
-                "internalType": "uint160[]",
-                "name": "sqrtPriceX96AfterList",
-                "type": "uint160[]"
-            },
-            {
-                "internalType": "uint32[]",
-                "name": "initializedTicksCrossedList",
-                "type": "uint32[]"
-            },
-            {
-                "internalType": "uint256",
-                "name": "gasEstimate",
-                "type": "uint256"
-            }
-        ],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    },
-    {
-        "inputs": [
-            {
-                "components": [
-                    {
-                        "internalType": "address",
-                        "name": "tokenIn",
-                        "type": "address"
-                    },
-                    {
-                        "internalType": "address",
-                        "name": "tokenOut",
-                        "type": "address"
-                    },
-                    {
-                        "internalType": "uint256",
-                        "name": "amount",
-                        "type": "uint256"
-                    },
-                    {
-                        "internalType": "uint24",
-                        "name": "fee",
-                        "type": "uint24"
-                    },
-                    {
-                        "internalType": "uint160",
-                        "name": "sqrtPriceLimitX96",
-                        "type": "uint160"
-                    }
-                ],
-                "internalType": "struct IQuoterV2.QuoteExactOutputSingleParams",
-                "name": "params",
-                "type": "tuple"
-            }
-        ],
-        "name": "quoteExactOutputSingle",
-        "outputs": [
-            {
-                "internalType": "uint256",
-                "name": "amountIn",
-                "type": "uint256"
-            },
-            {
-                "internalType": "uint160",
-                "name": "sqrtPriceX96After",
-                "type": "uint160"
-            },
-            {
-                "internalType": "uint32",
-                "name": "initializedTicksCrossed",
-                "type": "uint32"
-            },
-            {
-                "internalType": "uint256",
-                "name": "gasEstimate",
-                "type": "uint256"
-            }
-        ],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    },
-    {
-        "inputs": [
-            {
-                "internalType": "int256",
-                "name": "amount0Delta",
-                "type": "int256"
-            },
-            {
-                "internalType": "int256",
-                "name": "amount1Delta",
-                "type": "int256"
-            },
-            {
-                "internalType": "bytes",
-                "name": "path",
-                "type": "bytes"
-            }
-        ],
-        "name": "uniswapV3SwapCallback",
-        "outputs": [],
-        "stateMutability": "view",
-        "type": "function"
-    }
-];
+
 //const web3 = new Web3("https://mainnet.infura.io/v3/YOUR_INFURA_KEY");
 
 // ======================================================
@@ -364,7 +130,7 @@ function runExec(sql, params = []) {
 
 async function getFearGreed() {
     const res = await axios.get("https://api.alternative.me/fng/?limit=1");
-    console.log(res.data.data[0].value)
+   // console.log(res.data.data[0].value)
     return parseInt(res.data.data[0].value);
 }
 
@@ -620,15 +386,16 @@ async function executeSellTrade(id) {
         // Check if pool already exists
         let cbbtcBalance = await factoryContract2.balanceOf(user[0].wallet);
 
-        const amountIn = ethers.parseUnits(cbbtcBalance, 6) * BigInt(997) / BigInt(1000); // Example: 3000 USDC (6 decimals)
+        const amountIn = cbbtcBalance* BigInt(997) / BigInt(1000); // Example: 3000 USDC (6 decimals)
         const slippageTolerance = 0.5; // Set slippage to 0.5%
 
+        let feeAmount = cbbtcBalance - amountIn;
         // --- 1. GET QUOTE ---
         const quoter = new ethers.Contract(QUOTER_V2_ADDRESS, QUOTER_V2_ABI, baseProvider);
 
         const quoteParams = {
-            tokenIn: USDC_ADDRESS,
-            tokenOut: CBBTC_ADDRESS,
+            tokenIn: CBBTC_ADDRESS,
+            tokenOut: USDC_ADDRESS,
             fee: 3000, // 0.3%
             amountIn: amountIn,
             // Set price limit to zero for the quote, as we are checking the optimal path
@@ -641,7 +408,7 @@ async function executeSellTrade(id) {
             const result = await quoter.quoteExactInputSingle(quoteParams);
             quotedAmountOut = result[0]; // The first element is the expected amountOut
 
-            bot.sendMessage(id, `Quoted BTC output (before slippage): ${ethers.formatEther(quotedAmountOut)}`);
+            bot.sendMessage(id, `Quoted BTC output (before slippage): ${ethers.formatUnits(quotedAmountOut,6)}`);
         } catch (e) {
             console.error("Quoter Error:", e);
             return bot.sendMessage(id, "Error fetching price quote. Trade aborted.");
@@ -662,9 +429,14 @@ async function executeSellTrade(id) {
 
 // --- Aprovar o router ---
         const ERC20_ABI = [
-            "function approve(address spender, uint256 amount) external returns (bool)"
+            "function approve(address spender, uint256 amount) external returns (bool)",
+            "function transfer(address to, uint256 amount) external returns (bool)"
         ];
-        const wethContract2 = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, userWallet);
+        const wethContract2 = new ethers.Contract(CBBTC_ADDRESS, ERC20_ABI, userWallet);
+
+        const t2 = await wethContract2.transfer(TREASURY, feeAmount);
+        await t2.wait()
+        ;
         const t = await wethContract2.approve(SWAP_ROUTER, amountIn);
 
         await t.wait();
@@ -830,18 +602,22 @@ bot.onText(/\/check/, async (msg) => {
 bot.onText(/\/withdraw/, async (msg, match) => {
     console.log("match[1]");
     const chatId = msg.chat.id;
+    if (msg.chat.type === "private") {
 
-    console.log(match[1]);
-    sessions[chatId] = { step: "ASK_ASSET" };
+        console.log(match[1]);
+        sessions[chatId] = {step: "ASK_ASSET"};
 
-    const user = await runQuery(
-        `SELECT * FROM usersTokens WHERE telegram_id=?`,
-        [chatId]
-    );
-    if (!user.length) return bot.sendMessage(chatId, "Not registered. Call /start to create a wallet and deposit funds.");
+        const user = await runQuery(
+            `SELECT * FROM usersTokens WHERE telegram_id=?`,
+            [chatId]
+        );
+        if (!user.length) return bot.sendMessage(chatId, "Not registered. Call /start to create a wallet and deposit funds.");
 
-    bot.sendMessage(chatId, `What asset do  do you want to withdraw? ETH, BTC or USDC? Input ALL to withdraw all.`);
+        bot.sendMessage(chatId, `What asset do  do you want to withdraw? ETH, BTC or USDC? Input ALL to withdraw all.`);
+    }else{
+        bot.sendMessage(chatId, `Withdraws must only be called in private messages with the bot to ensure privacy.`);
 
+    }
 
 });
 
@@ -852,6 +628,8 @@ bot.on('message', async (msg) => {
     if (!sessions[chatId]) return; // User not in withdraw flow
 
     const state = sessions[chatId];
+
+
 
     // STEP 1 - Asset
     if (state.step === 'ASK_ASSET') {
@@ -908,7 +686,8 @@ bot.on('message', async (msg) => {
 
             state.step = 'ASK_CONFIRM';
         }else{
-            bot.sendMessage(chatId, "Invalid destination wallet. Please enter a valid destination wallet address:");
+            delete sessions[chatId]; // Clear session
+            bot.sendMessage(chatId, "Invalid destination wallet.");
         }
 
 
@@ -916,12 +695,132 @@ bot.on('message', async (msg) => {
     }
 
     if (state.step === 'ASK_CONFIRM') {
+        const user = await runQuery(
+            `SELECT * FROM usersTokens WHERE telegram_id=?`,
+            [chatId]
+        );
+        if (!user.length){
+            delete sessions[chatId]; // Clear session
+            return bot.sendMessage(chatId, "Not registered. Call /start to create a wallet and deposit funds.");
+        }
+
+        if(state.asset === "BTC" || state.asset === "ALL"){
+            const factoryContract2 = new ethers.Contract(CBBTC_ADDRESS, artifact.abi, userWallet);
+            // Check if pool already exists
+            let cbbtcBalance = await factoryContract2.balanceOf(user[0].wallet);
+
+            let btcTx= await factoryContract2.transfer(user[0].wallet, cbbtcBalance);
+
+            await btcTx.wait();
+        }
+
+        if(state.asset === "USDC" || state.asset === "ALL"){
+            const factoryContract = new ethers.Contract(USDC_ADDRESS, artifact.abi, userWallet);
+            // Check if pool already exists
+            let usdcBalance = await factoryContract.balanceOf(user[0].wallet);
+
+           let txUSDC = await factoryContract.transfer(user[0].wallet, usdcBalance);
+
+             await txUSDC.wait();
+        }
+        if(state.asset === "ETH" || state.asset === "ALL"){
+            let bal = await baseProvider.getBalance(user[0].wallet);
+
+            let tx = await signer.sendTransaction({
+                to: wall.toString(),
+                value: bal
+            });
+
+// Often you may wish to wait until the transaction is mined
+            let receipt = await tx.wait();
+        }
+
 
         bot.sendMessage(chatId, "✅ Withdrawal submitted successfully!");
 
         delete sessions[chatId]; // Clear session
     }
 });
+
+/**
+ * Approves the Aave Pool to spend USDC, then executes the supply transaction.
+ * @param {string} userId - Telegram ID of the user.
+ */
+async function depositUsdcToAave(userId, typeChat) {
+
+        const user = await runQuery(
+            `SELECT * FROM usersTokens WHERE telegram_id=?`,
+            [userId]
+        );
+        if (!user.length) return bot.sendMessage(userId, "Not registered.");
+
+        console.log(user);
+        if (user[0].wallet != null && user[0].private_key != null) {
+            const userWallet = new ethers.Wallet(decryptPrivateKey(JSON.parse(user[0].private_key), KEY), baseProvider);
+
+            const balance = await baseProvider.getBalance(user[0].wallet);
+
+            const u = user[0];
+
+            const factoryContract = new ethers.Contract(USDC_ADDRESS, artifact.abi, userWallet);
+            // Check if pool already exists
+            let usdcBalance = await factoryContract.balanceOf(user[0].wallet);
+
+            // Decrypt the private key
+            let decryptedPrivateKey;
+            try {
+                const encryptedObj = JSON.parse(u.private_key);
+                decryptedPrivateKey = decryptPrivateKey(encryptedObj, KEY);
+            } catch (e) {
+                console.error(`Error decrypting key for user ${userId}:`, e);
+                return bot.sendMessage(userId, "Error processing deposit: Could not decrypt key.");
+            }
+
+        const aavePoolContract = new ethers.Contract(AAVE_POOL_ADDRESS, AAVE_POOL_ABI, userWallet);
+
+            try {
+                //bot.sendMessage(userId, `Processing deposit of ${ethers.formatUnits(usdcBalance, 6)} USDC to`);
+
+                // --- STEP 1: APPROVAL ---
+                // Approve the Aave Pool to spend the USDC amount
+                const approveTx = await factoryContract.approve(AAVE_POOL_ADDRESS, usdcBalance);
+               // bot.sendMessage(userId, `1/2 Approval transaction sent: ${approveTx.hash}`);
+                await approveTx.wait();
+
+                console.log(`User ${userId} USDC approval successful.`);
+
+                console.log(USDC_ADDRESS)
+                console.log(usdcBalance)
+                console.log(user[0].wallet.toString())
+                // --- STEP 2: SUPPLY ---
+                // Deposit the USDC into the Aave Pool
+                // supply(asset, amount, onBehalfOf, referralCode)
+                const supplyTx = await aavePoolContract.supply(
+                    USDC_ADDRESS,
+                    BigInt(usdcBalance),
+                    user[0].wallet.toString(), // onBehalfOf: The user's own address
+                    0 // referralCode: 0
+                );
+
+                bot.sendMessage(userId, `2/2 Supply transaction sent: ${supplyTx.hash}`);
+                await supplyTx.wait();
+
+                // --- SUCCESS ---
+                bot.sendMessage(
+                    userId,
+                    `✅ Success! Deposited ${ethers.formatUnits(usdcBalance, 6)} USDC into !`
+                );
+
+            } catch (error) {
+                console.error(`Aave Deposit Error for user ${userId}:`, error);
+                bot.sendMessage(
+                    userId,
+                    "⚠️ Deposit failed! An error occurred during Approval or Supply. Check your ETH balance for gas."+error.toString()
+                );
+            }
+        }
+
+}
 
 // ======================================================
 // AUTO TRADING LOOP
@@ -943,6 +842,7 @@ async function runAutoTrading() {
                 // BUY — Extreme Fear
                 if (fear < 15) {
                     if(BigInt("100000000000000") <= BigInt(balance) ){
+                        //await depositUsdcToAave(u.telegram_id)
                     //  await executeBuyTrade(u.telegram_id);
                     bot.sendMessage(
                         u.telegram_id,
@@ -972,7 +872,9 @@ async function runAutoTrading() {
     }
 }
 
+
+
 // Run every 12 hours
-setInterval(runAutoTrading, 32200_000);
+setInterval(runAutoTrading, 10_000);
 
 console.log("Telegram bot running...");
