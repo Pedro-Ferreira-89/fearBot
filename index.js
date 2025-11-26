@@ -637,15 +637,6 @@ bot.on('message', async (msg) => {
 
     const state = sessions[chatId];
 
-    if (state.step === 'ASK_GREED') {
-        await runExec(
-            `UPDATE usersTokens SET fear=? WHERE telegram_id=?`,
-            [ Number(text), msg.from.id]
-        );
-        bot.sendMessage(chatId, "Input greed amount of when to sell:");
-        state.step ='ASK_GREED2';
-
-    }
     if (state.step === 'ASK_GREED2') {
         await runExec(
             `UPDATE usersTokens SET greed=? WHERE telegram_id=?`,
@@ -656,6 +647,17 @@ bot.on('message', async (msg) => {
 
 
     }
+
+    if (state.step === 'ASK_GREED') {
+        await runExec(
+            `UPDATE usersTokens SET fear=? WHERE telegram_id=?`,
+            [ Number(text), msg.from.id]
+        );
+        bot.sendMessage(chatId, "Input greed amount of when to sell:");
+        state.step ='ASK_GREED2';
+
+    }
+
 
 
     // STEP 1 - Asset
