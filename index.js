@@ -835,6 +835,8 @@ bot.on('message', async (msg) => {
 
                 if(withdrawSucess > 0){
                     bot.sendMessage(chatId, "✅ Withdrawal submitted successfully!");
+                }else{
+                    bot.sendMessage(chatId, "Nothing to withdraw!");
                 }
 
 
