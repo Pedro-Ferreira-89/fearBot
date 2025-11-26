@@ -591,6 +591,18 @@ bot.onText(/\/setFearAndGreed/, async (msg) => {
 
 });
 
+bot.onText(/\/getMyData/, async (msg) => {
+
+    let userId = msg.from.id;
+    const user = await runQuery(
+        `SELECT * FROM usersTokens WHERE telegram_id=?`,
+        [userId]
+    );
+    bot.sendMessage(msg.chat.id, `My fear trigger value:`+ user.fear);
+    bot.sendMessage(msg.chat.id, `My greed trigger value:`+user.greed);
+
+});
+
 bot.onText(/\/help/, async (msg) => {
     bot.sendMessage(msg.chat.id, `The bot will buy when sentiment of fear is below or equal to 15 and sell when above or equal to 85.`);
 });
@@ -629,8 +641,9 @@ bot.on('message', async (msg) => {
             `UPDATE usersTokens SET fear=? WHERE telegram_id=?`,
             [ Number(text), msg.from.id]
         );
-        state.step ='ASK_GREED2';
         bot.sendMessage(chatId, "Input greed amount of when to sell:");
+        state.step ='ASK_GREED2';
+
     }
     if (state.step === 'ASK_GREED2') {
         await runExec(
@@ -638,7 +651,7 @@ bot.on('message', async (msg) => {
             [ Number(text), msg.from.id]
         );
         bot.sendMessage(msg.from.id, "New greed/fear values set!");
-        delete sessions[chatId]; // Clear session
+        delete sessions[chatId]; // Clear session90
 
 
     }
