@@ -632,14 +632,14 @@ bot.on('message', async (msg) => {
         state.step ='ASK_GREED2';
         bot.sendMessage(chatId, "Input greed amount of when to sell:");
     }
-    if (state.step === 'ASK_GREED') {
+    if (state.step === 'ASK_GREED2') {
         await runExec(
             `UPDATE usersTokens SET greed=? WHERE telegram_id=?`,
             [ Number(text), msg.from.id]
         );
+        bot.sendMessage(msg.from.id, "New greed/fear values set!");
         delete sessions[chatId]; // Clear session
-        state.step ='ASK_GREED2';
-        bot.sendMessage(chatId, "New greed/fear values set!");
+
 
     }
 
