@@ -547,9 +547,9 @@ Total Portfolio Balance: $${totalHoldingas.toFixed(2)}
             let cbbtcBalance = await factoryContract2.balanceOf(user[0].wallet);
             let ethPrice, usdcPrice, btcPrice;
             try{
-                ethPrice = await getPriceBinance("ethereum");
+                ethPrice = await getPriceBinance("ETHUSDT");
                 usdcPrice = {price:1}//await getPrice("usd-coin");
-                btcPrice = await getPriceBinance("bitcoin");
+                btcPrice = await getPriceBinance("BTCUSDT");
             }catch (e) {
 
             }
