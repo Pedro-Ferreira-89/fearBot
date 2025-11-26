@@ -602,7 +602,6 @@ bot.onText(/\/withdraw/, async (msg, match) => {
     const chatId = msg.chat.id;
     if (msg.chat.type === "private") {
 
-        console.log(match[1]);
         sessions[chatId] = {step: "ASK_ASSET"};
 
         const user = await runQuery(
@@ -634,9 +633,11 @@ bot.on('message', async (msg) => {
         state.asset = text.toUpperCase();
         if(state.asset !== "ETH" && state.asset !== "BTC" && state.asset !== "USDC" && state.asset !== "ALL"){
             bot.sendMessage(chatId, "Invalid Asset. Valid assets are ETH, BTC and USDC.");
+            delete sessions[chatId]; // Clear session
         }else if(state.asset === "ALL"){
             state.step = 'ASK_WALLET';
             bot.sendMessage(chatId, "Please enter the destination wallet address:");
+            state.amount = "ALL"
         }else{
             state.step = 'ASK_AMOUNT';
             bot.sendMessage(chatId, "Please enter the amount you want to withdraw. Input ALL to withdraw all.");
@@ -650,6 +651,7 @@ bot.on('message', async (msg) => {
             bot.sendMessage(chatId, "Please enter the destination wallet address:");
 
         state.amount = text;
+
         state.step = 'ASK_WALLET';
 
         return;
@@ -658,7 +660,7 @@ bot.on('message', async (msg) => {
     let wall;
     // STEP 3 - Wallet
     if (state.step === 'ASK_WALLET') {
-       // state.wallet = text;
+        state.wallet = text;
 
 
         wall = text;
@@ -711,36 +713,71 @@ bot.on('message', async (msg) => {
                 bot.sendMessage(chatId, "Withdrawing...");
                 const userWallet = new ethers.Wallet(decryptPrivateKey(JSON.parse(user[0].private_key), KEY), baseProvider);
 
-                if (state.asset === "BTC" || state.asset === "ALL") {
-                    const factoryContract2 = new ethers.Contract(CBBTC_ADDRESS, artifact.abi, userWallet);
-                    // Check if pool already exists
-                    let cbbtcBalance = await factoryContract2.balanceOf(user[0].wallet);
+                try{
+                    if (state.asset === "BTC" || state.asset === "ALL") {
+                        const factoryContract2 = new ethers.Contract(CBBTC_ADDRESS, artifact.abi, userWallet);
+                        // Check if pool already exists
+                        let cbbtcBalance = await factoryContract2.balanceOf(user[0].wallet);
 
-                    let btcTx = await factoryContract2.transfer(user[0].wallet, cbbtcBalance);
+                       if(BigInt(cbbtcBalance) > BigInt(0)) {
+                           console.log(state.amount)
+                           let amount = (state.amount !== "ALL") ? ethers.parseEther(state.amount): cbbtcBalance;
 
-                    await btcTx.wait();
-                }
+                           let btcTx = await factoryContract2.transfer(state.wallet, amount);
 
-                if (state.asset === "USDC" || state.asset === "ALL") {
-                    const factoryContract = new ethers.Contract(USDC_ADDRESS, artifact.abi, userWallet);
-                    // Check if pool already exists
-                    let usdcBalance = await factoryContract.balanceOf(user[0].wallet);
+                            console.log(btcTx.hash);
+                            await btcTx.wait();
+                        }
+                    }
 
-                    let txUSDC = await factoryContract.transfer(user[0].wallet, usdcBalance);
+                    if (state.asset === "USDC" || state.asset === "ALL") {
+                        const factoryContract = new ethers.Contract(USDC_ADDRESS, artifact.abi, userWallet);
+                        // Check if pool already exists
+                        let usdcBalance = await factoryContract.balanceOf(user[0].wallet);
+                        let amount = (state.amount !== "ALL") ? ethers.parseUnits(state.amount, 6): usdcBalance;
 
-                    await txUSDC.wait();
-                }
-                if (state.asset === "ETH" || state.asset === "ALL") {
-                    let bal = await baseProvider.getBalance(user[0].wallet);
+                        if(BigInt(usdcBalance) > BigInt(0)){
+                            let txUSDC = await factoryContract.transfer(state.wallet,amount);
 
-                    let tx = await signer.sendTransaction({
-                        to: wall.toString(),
-                        value: bal
-                    });
+                            await txUSDC.wait();
+                        }
+
+                    }
+                    if (state.asset === "ETH" || state.asset === "ALL") {
+                        let bal = await baseProvider.getBalance(user[0].wallet);
+
+                        let amount = (state.amount !== "ALL") ? ethers.parseEther(state.amount): bal;
+
+                        // 2. Determine Gas Price (EIP-1559)
+                        const feeData = await baseProvider.getFeeData();
+
+                        // We should always have maxFeePerGas on an EIP-1559 network
+                        if (!feeData.maxFeePerGas) {
+                            throw new Error("Provider did not return maxFeePerGas for EIP-1559.");
+                        }
+
+                        // 3. Calculate Maximum Cost
+                        const maxFeePerGas = feeData.maxFeePerGas;
+                        const GAS_UNITS_SIMPLE_TRANSFER = BigInt(21000)
+                        // 2. Calculate Maximum Cost: Max Cost = Gas Units * Max Fee Per Gas
+                        const maxCostWei = GAS_UNITS_SIMPLE_TRANSFER * maxFeePerGas;
+
+                        // Add a small safety buffer (e.g., 5%)
+                        const buffer = BigInt(105);
+                        const maxRequiredETH = (maxCostWei * buffer) / BigInt(100);
+
+                        let tx = await userWallet.sendTransaction({
+                            to: state.wallet.toString(),
+                            value: amount - maxRequiredETH
+                        });
 
 // Often you may wish to wait until the transaction is mined
-                    let receipt = await tx.wait();
+                        let receipt = await tx.wait();
+                    }
+                }catch (e){
+                    console.log(e)
                 }
+
 
 
                 bot.sendMessage(chatId, "✅ Withdrawal submitted successfully!");
