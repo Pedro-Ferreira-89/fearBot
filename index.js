@@ -598,8 +598,9 @@ bot.onText(/\/getMyData/, async (msg) => {
         `SELECT * FROM usersTokens WHERE telegram_id=?`,
         [userId]
     );
-    bot.sendMessage(msg.chat.id, `My fear trigger value:`+ user.fear);
-    bot.sendMessage(msg.chat.id, `My greed trigger value:`+user.greed);
+    if (!user.length) return bot.sendMessage(chatId, "Not registered.");
+    bot.sendMessage(msg.chat.id, `My fear trigger value:`+ user[0].fear);
+    bot.sendMessage(msg.chat.id, `My greed trigger value:`+  user[0].greed);
 
 });
 
