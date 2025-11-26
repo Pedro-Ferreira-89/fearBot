@@ -15,14 +15,15 @@ const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const bot = new TelegramBot(TOKEN, { polling: true });
 const baseProvider = new ethers.JsonRpcProvider(process.env.BASE_RPC_URL);
 const API           = "https://api.coingecko.com/api/v3";
-const USDC_ADDRESS  = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'; // Example Sepolia
-const CBBTC_ADDRESS = "0x4200000000000000000000000000000000000006"
-const SWAP_ROUTER   = "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4";
-const TREASURY      = "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4";
+const APIBINANCE= "https://api.binance.com/api/v3/trades?symbol=";
+const USDC_ADDRESS  = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'; // Example Sepolia
+const CBBTC_ADDRESS = "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"
+const SWAP_ROUTER   = "0x2626664c2603336E57B271c5C0b26F421741e481";
+const TREASURY      = "0x669a6c23579ea82d8e2ecdb1ab0e3974e32d59c6";
 const ALGORITHM            = process.env.ALGORITHM;
 const KEY  = Buffer.from(process.env.KEY_ALG, 'hex')//crypto.randomBytes(32); // Store this securely (env or SOPS)
 const IV_LENGTH            = Number(process.env.IVLENGTH); // AES block size
-const QUOTER_V2_ADDRESS = "0xC5290058841028F1614F3A6F0F5816cAd0df5E27"; // Example Base Sepolia Quoter V2
+const QUOTER_V2_ADDRESS = "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a"; // Example Base Sepolia Quoter V2
 const AAVE_POOL_ADDRESS = "0xD1113dD8c1718D051EaC536FC1E30c2d0728c505"; // Example Aave V3 Pool on Base Sepolia
 const QUOTER_V2_ABI = artifactQuoter;
 const AAVE_POOL_ABI = artifactAAVE;
@@ -100,7 +101,7 @@ async function getFearGreed() {
     return parseInt(res.data.data[0].value);
 }
 
-// 🪙 Helper: get price & 24h change
+/* 🪙 Helper: get price & 24h change
 async function getPrice(symbol) {
     try {
         console.log(`${API}/coins/`+ symbol)
@@ -122,18 +123,12 @@ async function getPrice(symbol) {
         return 0;
     }
 }
+*/
 
 // 🪙 Helper: get price & 24h change
 async function getPriceBinance(symbol) {
     try {
-        console.log(`${API}/coins/`+ symbol)
-
-        const res = await axios.get(`https://api.binance.com/api/v3/trades?symbol=`+ symbol, {
-
-        });
-
-
-
+        const res = await axios.get(`${APIBINANCE}`+ symbol, {});
         return {
             price: res.data[0].price,
 
@@ -291,9 +286,9 @@ async function executeBuyTrade(id) {
                 const result = await quoter.quoteExactInputSingle(quoteParams);
                 quotedAmountOut = result[0]; // The first element is the expected amountOut
 
-                bot.sendMessage(id, `Quoted BTC output (before slippage): ${ethers.formatEther(quotedAmountOut)}`);
+                bot.sendMessage(id, `Quoted BTC output (before slippage): ${ethers.formatUnits(quotedAmountOut, 8)}`);
             } catch (e) {
-                console.error("Quoter Error:", e);
+
                 return bot.sendMessage(id, "Error fetching price quote. Trade aborted.");
             }
 
@@ -362,8 +357,7 @@ async function executeSellTrade(id) {
         [id]
     );
     if (!user.length) return bot.sendMessage(id, "Not registered.");
-    console.log(
-        id,user[0]);
+
     if(user[0].wallet != null && user[0].wallet != null) {
         const userWallet = new ethers.Wallet(decryptPrivateKey(JSON.parse(user[0].private_key), KEY), baseProvider);
 
@@ -398,7 +392,7 @@ async function executeSellTrade(id) {
 
             bot.sendMessage(id, `Quoted USDC output (before slippage): ${ethers.formatUnits(quotedAmountOut,6)}`);
         } catch (e) {
-            console.error("Quoter Error:", e);
+
             return bot.sendMessage(id, "Error fetching price quote. Trade aborted.");
         }
 
@@ -484,9 +478,7 @@ bot.onText(/\/status/, async (msg) => {
             [chatId]
         );
         if (!user.length) return bot.sendMessage(chatId, "Not registered.");
-        console.log(
-            chatId,user[0]);
-        console.log(user);
+
         if(user[0].wallet != null && user[0].wallet != null){
             const userWallet = new ethers.Wallet(decryptPrivateKey(JSON.parse(user[0].private_key), KEY), baseProvider);
 
@@ -514,7 +506,7 @@ bot.onText(/\/status/, async (msg) => {
 
             let usdcHoldings = Number(Number(ethers.formatUnits(usdcBalance, 6)) * Number(usdcPrice.price)).toFixed(2);
 
-            let btcHoldings = Number(Number(ethers.formatEther(cbbtcBalance)) * Number(btcPrice.price)).toFixed(2);
+            let btcHoldings = Number(Number(ethers.formatUnits(cbbtcBalance, 8)) * Number(btcPrice.price)).toFixed(2);
 
             let totalHoldingas = Number(ethHoldings) + Number(usdcHoldings) + Number(btcHoldings);
 
@@ -525,7 +517,7 @@ bot.onText(/\/status/, async (msg) => {
 Wallet: \`${u.wallet || "Not set"}\`
 ETH Balance: ${ethers.formatEther(balance)}  ($${ethHoldings})
 USDC Balance: ${ethers.formatUnits(usdcBalance, 6)} ($${usdcHoldings})
-BTC Balance: ${ethers.formatEther(cbbtcBalance)} ($${btcHoldings})
+BTC Balance: ${ethers.formatUnits(cbbtcBalance, 8)} ($${btcHoldings})
 Total Portfolio Balance: $${totalHoldingas.toFixed(2)}
     `,
                 { parse_mode: "Markdown" }
@@ -566,7 +558,7 @@ Total Portfolio Balance: $${totalHoldingas.toFixed(2)}
 
             let usdcHoldings = Number(Number(ethers.formatUnits(usdcBalance, 6)) * Number(usdcPrice.price)).toFixed(2);
 
-            let btcHoldings = Number(Number(ethers.formatEther(cbbtcBalance)) * Number(btcPrice.price)).toFixed(2);
+            let btcHoldings = Number(Number(ethers.formatUnits(cbbtcBalance, 8)) * Number(btcPrice.price)).toFixed(2);
 
             let totalHoldingas = Number(ethHoldings) + Number(usdcHoldings) + Number(btcHoldings);
 
@@ -577,7 +569,7 @@ Total Portfolio Balance: $${totalHoldingas.toFixed(2)}
 Wallet: \`${u.wallet || "Not set"}\`
 ETH Balance: ${ethers.formatEther(balance)}  ($${ethHoldings})
 USDC Balance: ${ethers.formatUnits(usdcBalance, 6)} ($${usdcHoldings})
-BTC Balance: ${ethers.formatEther(cbbtcBalance)} ($${btcHoldings})
+BTC Balance: ${ethers.formatUnits(cbbtcBalance, 8)} ($${btcHoldings})
 Total Portfolio Balance: $${totalHoldingas.toFixed(2)}
     `,
                 { parse_mode: "Markdown" }
@@ -945,8 +937,6 @@ async function runAutoTrading() {
         console.error(e);
     }
 }
-
-
 
 // Run every 12 hours
 setInterval(runAutoTrading, 43200_000);
