@@ -599,8 +599,8 @@ bot.onText(/\/getMyData/, async (msg) => {
         [userId]
     );
     if (!user.length) return bot.sendMessage(chatId, "Not registered.");
-    bot.sendMessage(msg.chat.id, `My fear trigger value:`+ user[0].fear);
-    bot.sendMessage(msg.chat.id, `My greed trigger value:`+  user[0].greed);
+    bot.sendMessage(msg.chat.id, `My fear trigger value: `+ user[0].fear);
+    bot.sendMessage(msg.chat.id, `My greed trigger value: `+  user[0].greed);
 
 });
 
@@ -638,23 +638,34 @@ bot.on('message', async (msg) => {
     const state = sessions[chatId];
 
     if (state.step === 'ASK_GREED2') {
-        await runExec(
-            `UPDATE usersTokens SET greed=? WHERE telegram_id=?`,
-            [ Number(text), msg.from.id]
-        );
-        bot.sendMessage(msg.from.id, "New greed/fear values set!");
-        delete sessions[chatId]; // Clear session90
+        if(Number(text) > 1 && Number(text) < 100){
+            await runExec(
+                `UPDATE usersTokens SET greed=? WHERE telegram_id=?`,
+                [ Number(text), msg.from.id]
+            );
+            bot.sendMessage(chatId, "New greed/fear values set!");
+            delete sessions[chatId]; // Clear session90
+        }else{
+            delete sessions[chatId]; // Clear session90
+            bot.sendMessage(chatId, "Invalid value for greed!");
+        }
+
 
 
     }
 
     if (state.step === 'ASK_GREED') {
-        await runExec(
-            `UPDATE usersTokens SET fear=? WHERE telegram_id=?`,
-            [ Number(text), msg.from.id]
-        );
-        bot.sendMessage(chatId, "Input greed amount of when to sell:");
-        state.step ='ASK_GREED2';
+        if(Number(text) > 1 && Number(text) < 100) {
+            await runExec(
+                `UPDATE usersTokens SET fear=? WHERE telegram_id=?`,
+                [Number(text), msg.from.id]
+            );
+            bot.sendMessage(chatId, "Input greed amount of when to sell:");
+            state.step = 'ASK_GREED2';
+        }else{
+            delete sessions[chatId]; // Clear session90
+            bot.sendMessage(chatId, "Invalid value for fear!");
+        }
 
     }
 
