@@ -586,8 +586,13 @@ bot.onText(/\/check/, async (msg) => {
 });
 
 bot.onText(/\/setFearAndGreed/, async (msg) => {
-    sessions[msg.chat.id] = {step: "ASK_GREED"};
-    bot.sendMessage(msg.chat.id, `Input the fear value when you want to buy:`);
+
+    if (msg.chat.type === "private") {
+        sessions[msg.chat.id] = {step: "ASK_GREED"};
+        bot.sendMessage(msg.chat.id, `Input the fear value when you want to buy:`);
+    }else{
+        bot.sendMessage(msg.chat.id, `This operation can only be done through private message.`);
+    }
 
 });
 
