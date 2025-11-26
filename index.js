@@ -585,6 +585,12 @@ bot.onText(/\/check/, async (msg) => {
     bot.sendMessage(msg.chat.id, `Current Fear/Greed Index: ${await getFearGreed()}`);
 });
 
+bot.onText(/\/setFearAndGreed/, async (msg) => {
+    sessions[chatId] = {step: "ASK_GREED"};
+    bot.sendMessage(msg.chat.id, `Input the fear value when you want to buy:`);
+
+});
+
 bot.onText(/\/help/, async (msg) => {
     bot.sendMessage(msg.chat.id, `The bot will buy when sentiment of fear is below or equal to 15 and sell when above or equal to 85.`);
 });
@@ -618,6 +624,22 @@ bot.on('message', async (msg) => {
 
     const state = sessions[chatId];
 
+    if (state.step === 'ASK_GREED') {
+        await runExec(
+            `UPDATE usersTokens SET fear=? WHERE telegram_id=?`,
+            [ Number(text), msg.text.from]
+        );
+        state.step ='ASK_GREED2';
+        bot.sendMessage(chatId, "Input greed amount of when to sell:");
+    }
+    if (state.step === 'ASK_GREED') {
+        await runExec(
+            `UPDATE usersTokens SET greed=? WHERE telegram_id=?`,
+            [ Number(text), msg.text.from]
+        );
+        state.step ='ASK_GREED2';
+        bot.sendMessage(chatId, "New greed/fear values set!");
+    }
 
 
     // STEP 1 - Asset
