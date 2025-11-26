@@ -586,7 +586,7 @@ bot.onText(/\/check/, async (msg) => {
 });
 
 bot.onText(/\/setFearAndGreed/, async (msg) => {
-    sessions[chatId] = {step: "ASK_GREED"};
+    sessions[msg.chat.id] = {step: "ASK_GREED"};
     bot.sendMessage(msg.chat.id, `Input the fear value when you want to buy:`);
 
 });
