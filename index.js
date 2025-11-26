@@ -2,12 +2,11 @@ require('dotenv').config();
 const TelegramBot= require("node-telegram-bot-api");
 const sqlite3= require("sqlite3").verbose();
 const axios       = require("axios");
-const Web3  = require("web3");
 const ethers      = require('ethers')
-const {eth}       = require("web3");
-const artifact =require("./artifacts/token.js").artifact;
-const artifact2      =require("./artifacts/router.js").artifact;
-const artifactQuoter      =require("./artifacts/quoter.js").artifact;
+const artifact       = require("./artifacts/token.js").artifact;
+const artifact2           = require("./artifacts/router.js").artifact;
+const artifactQuoter      = require("./artifacts/quoter.js").artifact;
+const artifactAAVE      = require("./artifacts/aave.js").artifact;
 const crypto      = require('crypto');
 // ======================================================
 // CONFIG
@@ -26,45 +25,10 @@ const IV_LENGTH            = Number(process.env.IVLENGTH); // AES block size
 const QUOTER_V2_ADDRESS = "0xC5290058841028F1614F3A6F0F5816cAd0df5E27"; // Example Base Sepolia Quoter V2
 const AAVE_POOL_ADDRESS = "0xD1113dD8c1718D051EaC536FC1E30c2d0728c505"; // Example Aave V3 Pool on Base Sepolia
 const QUOTER_V2_ABI = artifactQuoter;
+const AAVE_POOL_ABI = artifactAAVE;
 
 // In-memory session state
 const sessions = {};
-
-// NOTE: Verify the correct Aave V3 Pool address for your network!
-// Minimal ABI for the Aave Lending Pool
-const AAVE_POOL_ABI = [
-    {
-        "inputs": [
-            {
-                "internalType": "address",
-                "name": "asset",
-                "type": "address"
-            },
-            {
-                "internalType": "uint256",
-                "name": "amount",
-                "type": "uint256"
-            },
-            {
-                "internalType": "address",
-                "name": "onBehalfOf",
-                "type": "address"
-            },
-            {
-                "internalType": "uint16",
-                "name": "referralCode",
-                "type": "uint16"
-            }
-        ],
-        "name": "supply",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    }];
-
-// Define Quoter V2 ABI (only need the function we will call)
-
-//const web3 = new Web3("https://mainnet.infura.io/v3/YOUR_INFURA_KEY");
 
 // ======================================================
 // SQLITE INIT
@@ -77,7 +41,9 @@ db.run(`
     wallet TEXT,
     private_key TEXT,
     usdc_balance REAL DEFAULT 0,
-    position_status TEXT DEFAULT 'NONE'
+    position_status TEXT DEFAULT 'NONE',
+    fear INTEGER DEFAULT 15,
+    greed INTEGER DEFAULT 85
   )
 `);
 
@@ -157,6 +123,40 @@ async function getPrice(symbol) {
     }
 }
 
+// 🪙 Helper: get price & 24h change
+async function getPriceBinance(symbol) {
+    try {
+        console.log(`${API}/coins/`+ symbol)
+
+        const res = await axios.get(`https://api.binance.com/api/v3/trades?symbol=`+ symbol, {
+
+        });
+
+
+
+        return {
+            price: res.data[0].price,
+
+        };
+    } catch (err) {
+        console.error(err);
+
+        return 0;
+    }
+}
+
+function generateNewWallet(chatId){
+    const mnemonic = process.env.MNEMONIC;
+    // ALWAYS derive from the root. Never reuse the derived node.
+    const derivationPath = "m/44'/60'/0'/0/";
+
+    // Uses ethers.HDNodeWallet.fromMnemonic which handles both the mnemonic and the path
+    return ethers.HDNodeWallet.fromMnemonic(
+        ethers.Mnemonic.fromPhrase(mnemonic),
+        derivationPath + chatId
+    );
+
+}
 
 // ======================================================
 // BOT COMMANDS
@@ -167,24 +167,19 @@ bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
 
     if (msg.chat.type === "private") {
+
         await runExec(
             `INSERT OR IGNORE INTO usersTokens(telegram_id) VALUES(?)`,
             [chatId]
         );
 
-        const mnemonic = process.env.MNEMONIC;
-        // ALWAYS derive from the root. Never reuse the derived node.
-        const derivationPath = "m/44'/60'/0'/0/";
+        const wallet = generateNewWallet(chatId)
 
-        // Uses ethers.HDNodeWallet.fromMnemonic which handles both the mnemonic and the path
-        const wallet = ethers.HDNodeWallet.fromMnemonic(
-            ethers.Mnemonic.fromPhrase(mnemonic),
-            derivationPath + chatId
-        );
         await runExec(
             `UPDATE usersTokens SET wallet=?, private_key=? WHERE telegram_id=?`,
             [wallet.address, JSON.stringify(encryptPrivateKey(wallet.privateKey, KEY)), chatId]
         );
+
         bot.sendMessage(
             chatId, `🚀 Welcome to Simoshi!
             
@@ -219,15 +214,9 @@ Sent you a private message with your deposit address details!
             [msg.from.id]
         );
 
-        const mnemonic = process.env.MNEMONIC;
-        // ALWAYS derive from the root. Never reuse the derived node.
-        const derivationPath = "m/44'/60'/0'/0/";
-
         // Uses ethers.HDNodeWallet.fromMnemonic which handles both the mnemonic and the path
-        const wallet = ethers.HDNodeWallet.fromMnemonic(
-            ethers.Mnemonic.fromPhrase(mnemonic),
-            derivationPath + msg.from.id
-        );
+        const wallet = generateNewWallet(msg.from.id);
+
         await runExec(
             `UPDATE usersTokens SET wallet=?, private_key=? WHERE telegram_id=?`,
             [wallet.address, JSON.stringify(encryptPrivateKey(wallet.privateKey, KEY)), msg.from.id]
@@ -262,10 +251,9 @@ async function executeBuyTrade(id) {
         [id]
     );
     if (!user.length) return bot.sendMessage(id, "Not registered.");
-    console.log(
-        id, user[0]);
 
-    if (user[0].wallet != null && user[0].wallet != null) {
+
+    if (user[0].wallet != null && user[0].private_key != null) {
         const balance = await baseProvider.getBalance(user[0].wallet);
 
         if(BigInt("10000000000000") <= BigInt(balance) ) {
@@ -279,10 +267,10 @@ async function executeBuyTrade(id) {
             let usdcBalance = await factoryContract.balanceOf(user[0].wallet);
 
             let usdcBalanceBuy = usdcBalance * BigInt(997) / BigInt(1000);
-            let feeAmount = usdcBalance - usdcBalanceBuy;
+            let feeAmount = BigInt(usdcBalance) - BigInt( usdcBalanceBuy);
 // --- Definir quantidade ---
 
-            const amountIn = usdcBalanceBuy* BigInt(997) / BigInt(1000); // Example: 3000 USDC (6 decimals)
+            const amountIn = usdcBalanceBuy; // Example: 3000 USDC (6 decimals)
             const slippageTolerance = 0.5; // Set slippage to 0.5%
 
             // --- 1. GET QUOTE ---
@@ -408,7 +396,7 @@ async function executeSellTrade(id) {
             const result = await quoter.quoteExactInputSingle(quoteParams);
             quotedAmountOut = result[0]; // The first element is the expected amountOut
 
-            bot.sendMessage(id, `Quoted BTC output (before slippage): ${ethers.formatUnits(quotedAmountOut,6)}`);
+            bot.sendMessage(id, `Quoted USDC output (before slippage): ${ethers.formatUnits(quotedAmountOut,6)}`);
         } catch (e) {
             console.error("Quoter Error:", e);
             return bot.sendMessage(id, "Error fetching price quote. Trade aborted.");
@@ -467,16 +455,23 @@ async function executeSellTrade(id) {
 
 // REGISTER WALLET
 bot.onText(/\/buyNow/, async (msg) => {
-
     const chatId = msg.chat.id;
-    await executeBuyTrade(chatId);
+    try{
+        await executeBuyTrade(chatId);
+    }catch(e){
+
+    }
+
 });
 
 // REGISTER WALLET
 bot.onText(/\/closePosition/, async (msg) => {
     const chatId = msg.chat.id;
-    await executeSellTrade(chatId);
+    try {
+        await executeSellTrade(chatId);
+    }catch(e){
 
+    }
 });
 
 // CHECK STATUS
@@ -508,9 +503,9 @@ bot.onText(/\/status/, async (msg) => {
             let cbbtcBalance = await factoryContract2.balanceOf(user[0].wallet);
             let ethPrice, usdcPrice, btcPrice;
             try{
-                ethPrice = await getPrice("ethereum");
-                usdcPrice = await getPrice("usd-coin");
-                btcPrice = await getPrice("bitcoin");
+                ethPrice = await getPriceBinance("ETHUSDT");
+                usdcPrice = {price:1};
+                btcPrice = await getPriceBinance("BTCUSDT");
             }catch (e) {
 
             }
@@ -560,9 +555,9 @@ Total Portfolio Balance: $${totalHoldingas.toFixed(2)}
             let cbbtcBalance = await factoryContract2.balanceOf(user[0].wallet);
             let ethPrice, usdcPrice, btcPrice;
             try{
-                ethPrice = await getPrice("ethereum");
+                ethPrice = await getPriceBinance("ethereum");
                 usdcPrice = {price:1}//await getPrice("usd-coin");
-                btcPrice = await getPrice("bitcoin");
+                btcPrice = await getPriceBinance("bitcoin");
             }catch (e) {
 
             }
@@ -598,9 +593,12 @@ bot.onText(/\/check/, async (msg) => {
     bot.sendMessage(msg.chat.id, `Current Fear/Greed Index: ${await getFearGreed()}`);
 });
 
+bot.onText(/\/help/, async (msg) => {
+    bot.sendMessage(msg.chat.id, `The bot will buy when sentiment of fear is below or equal to 15 and sell when above or equal to 85.`);
+});
+
 // WITHDRAW
 bot.onText(/\/withdraw/, async (msg, match) => {
-    console.log("match[1]");
     const chatId = msg.chat.id;
     if (msg.chat.type === "private") {
 
@@ -695,50 +693,61 @@ bot.on('message', async (msg) => {
     }
 
     if (state.step === 'ASK_CONFIRM') {
-        const user = await runQuery(
-            `SELECT * FROM usersTokens WHERE telegram_id=?`,
-            [chatId]
-        );
-        if (!user.length){
-            delete sessions[chatId]; // Clear session
-            return bot.sendMessage(chatId, "Not registered. Call /start to create a wallet and deposit funds.");
-        }
+        if(text.toUpperCase() === "OK") {
 
-        if(state.asset === "BTC" || state.asset === "ALL"){
-            const factoryContract2 = new ethers.Contract(CBBTC_ADDRESS, artifact.abi, userWallet);
-            // Check if pool already exists
-            let cbbtcBalance = await factoryContract2.balanceOf(user[0].wallet);
 
-            let btcTx= await factoryContract2.transfer(user[0].wallet, cbbtcBalance);
 
-            await btcTx.wait();
-        }
+            const user = await runQuery(
+                `SELECT * FROM usersTokens WHERE telegram_id=?`,
+                [chatId]
+            );
+            if (!user.length) {
+                delete sessions[chatId]; // Clear session
+                return bot.sendMessage(chatId, "Not registered. Call /start to create a wallet and deposit funds.");
+            }
 
-        if(state.asset === "USDC" || state.asset === "ALL"){
-            const factoryContract = new ethers.Contract(USDC_ADDRESS, artifact.abi, userWallet);
-            // Check if pool already exists
-            let usdcBalance = await factoryContract.balanceOf(user[0].wallet);
+            if(user[0].wallet != null && user[0].wallet != null) {
 
-           let txUSDC = await factoryContract.transfer(user[0].wallet, usdcBalance);
+                bot.sendMessage(chatId, "Withdrawing...");
+                const userWallet = new ethers.Wallet(decryptPrivateKey(JSON.parse(user[0].private_key), KEY), baseProvider);
 
-             await txUSDC.wait();
-        }
-        if(state.asset === "ETH" || state.asset === "ALL"){
-            let bal = await baseProvider.getBalance(user[0].wallet);
+                if (state.asset === "BTC" || state.asset === "ALL") {
+                    const factoryContract2 = new ethers.Contract(CBBTC_ADDRESS, artifact.abi, userWallet);
+                    // Check if pool already exists
+                    let cbbtcBalance = await factoryContract2.balanceOf(user[0].wallet);
 
-            let tx = await signer.sendTransaction({
-                to: wall.toString(),
-                value: bal
-            });
+                    let btcTx = await factoryContract2.transfer(user[0].wallet, cbbtcBalance);
+
+                    await btcTx.wait();
+                }
+
+                if (state.asset === "USDC" || state.asset === "ALL") {
+                    const factoryContract = new ethers.Contract(USDC_ADDRESS, artifact.abi, userWallet);
+                    // Check if pool already exists
+                    let usdcBalance = await factoryContract.balanceOf(user[0].wallet);
+
+                    let txUSDC = await factoryContract.transfer(user[0].wallet, usdcBalance);
+
+                    await txUSDC.wait();
+                }
+                if (state.asset === "ETH" || state.asset === "ALL") {
+                    let bal = await baseProvider.getBalance(user[0].wallet);
+
+                    let tx = await signer.sendTransaction({
+                        to: wall.toString(),
+                        value: bal
+                    });
 
 // Often you may wish to wait until the transaction is mined
-            let receipt = await tx.wait();
+                    let receipt = await tx.wait();
+                }
+
+
+                bot.sendMessage(chatId, "✅ Withdrawal submitted successfully!");
+
+                delete sessions[chatId]; // Clear session
+            }
         }
-
-
-        bot.sendMessage(chatId, "✅ Withdrawal submitted successfully!");
-
-        delete sessions[chatId]; // Clear session
     }
 });
 
@@ -839,30 +848,58 @@ async function runAutoTrading() {
             const balance = await baseProvider.getBalance(u.wallet);
 
 
-                // BUY — Extreme Fear
-                if (fear < 15) {
-                    if(BigInt("100000000000000") <= BigInt(balance) ){
-                        //await depositUsdcToAave(u.telegram_id)
-                    //  await executeBuyTrade(u.telegram_id);
-                    bot.sendMessage(
-                        u.telegram_id,
-                        `😱 Extreme Fear (${fear}) → BUY executed!`
-                    );
-                    }else{
-                        bot.sendMessage(
-                            u.telegram_id,
-                            `You don't have enough ether in your wallet to process transactions, please deposit at least 0.0001 ETH!`
-                        );
-                    }
+
+
+            // BUY — Extreme Fear
+                if (fear <= u.fear) {
+
+
+                        const factoryContract = new ethers.Contract(USDC_ADDRESS, artifact.abi, userWallet);
+                        // Check if pool already exists
+                        let usdcBalance = await factoryContract.balanceOf(u.wallet);
+
+                        if(BigInt(usdcBalance) > BigInt(1000)){
+                            if(BigInt("100000000000000") <= BigInt(balance) ){
+                                //await depositUsdcToAave(u.telegram_id)
+                                  await executeBuyTrade(u.telegram_id);
+                                bot.sendMessage(
+                                    u.telegram_id,
+                                    `😱 Extreme Fear (${fear}) → BUY executed!`
+                                );
+                            }else{
+                                bot.sendMessage(
+                                    u.telegram_id,
+                                    `You don't have enough ether in your wallet to process transactions, please deposit at least 0.0001 ETH!`
+                                );
+                            }
+                        }
+
+
+
                 }
 
                 // SELL — Extreme Greed
-                if (fear > 85) {
-                    // await executeSellTrade(u.telegram_id);
-                    bot.sendMessage(
-                        u.telegram_id,
-                        `🤩 Extreme Greed (${fear}) → SELL executed!`
-                    );
+                if (fear >= u.greed) {
+                    const factoryContract = new ethers.Contract(CBBTC_ADDRESS, artifact.abi, userWallet);
+                    // Check if pool already exists
+                    let btcBalance = await factoryContract.balanceOf(u.wallet);
+
+                    if(BigInt(btcBalance) > BigInt(1000)) {
+
+                        if(BigInt("100000000000000") <= BigInt(balance) ) {
+                            await executeSellTrade(u.telegram_id);
+
+                            bot.sendMessage(
+                                u.telegram_id,
+                                `🤩 Extreme Greed (${fear}) → SELL executed!`
+                            );
+                        }else{
+                            bot.sendMessage(
+                                u.telegram_id,
+                                `You don't have enough ether in your wallet to process transactions, please deposit at least 0.0001 ETH!`
+                            );
+                        }
+                    }
                 }
 
 
@@ -875,6 +912,6 @@ async function runAutoTrading() {
 
 
 // Run every 12 hours
-setInterval(runAutoTrading, 10_000);
+setInterval(runAutoTrading, 43200_000);
 
 console.log("Telegram bot running...");
