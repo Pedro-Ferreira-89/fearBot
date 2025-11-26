@@ -758,6 +758,8 @@ bot.on('message', async (msg) => {
 
             if(user[0].wallet != null && user[0].wallet != null) {
 
+                let withdrawSucess = 0;
+
                 bot.sendMessage(chatId, "Withdrawing...");
                 const userWallet = new ethers.Wallet(decryptPrivateKey(JSON.parse(user[0].private_key), KEY), baseProvider);
 
@@ -775,6 +777,7 @@ bot.on('message', async (msg) => {
 
                             console.log(btcTx.hash);
                             await btcTx.wait();
+                            withdrawSucess += 1;
                         }
                     }
 
@@ -788,6 +791,7 @@ bot.on('message', async (msg) => {
                             let txUSDC = await factoryContract.transfer(state.wallet,amount);
 
                             await txUSDC.wait();
+                            withdrawSucess += 1;
                         }
 
                     }
@@ -821,6 +825,7 @@ bot.on('message', async (msg) => {
 
 // Often you may wish to wait until the transaction is mined
                         let receipt = await tx.wait();
+                        withdrawSucess += 1;
                     }
                 }catch (e){
                     console.log(e)
@@ -828,7 +833,10 @@ bot.on('message', async (msg) => {
 
 
 
-                bot.sendMessage(chatId, "✅ Withdrawal submitted successfully!");
+                if(withdrawSucess > 0){
+                    bot.sendMessage(chatId, "✅ Withdrawal submitted successfully!");
+                }
+
 
                 delete sessions[chatId]; // Clear session
             }
