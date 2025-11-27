@@ -1004,6 +1004,9 @@ async function runAutoTrading() {
     }
 }
 
+// 👇 Run once when the bot starts
+runAutoTrading();
+
 // Run every 12 hours
 setInterval(runAutoTrading, 43200_000);
 
